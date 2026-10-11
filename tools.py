@@ -83,7 +83,9 @@ BACKGROUND_DESCRIPTION = (
     "action=set 时用 msg_id 指定一条带图片的消息（通常是对方刚发来的那张图）；action=clear 清除背景，不用填 msg_id。"
 )
 SHARE_CONTACT_DESCRIPTION = (
-    "用 iMessage 的「共享名字与照片」把你自己的名字和头像发给对方，对方手机上会提示是否保存。"
+    "用 iMessage 的「共享名字与照片」把你这个号码的名字和头像发给对方。"
+    "对方不会收到一条消息，而是在聊天顶部你的名字下面出现「更新」，点了才会改。"
+    "名字和头像来自 Photon 账号的设置，不是你的昵称。"
     "只在对方想要你的联系方式、问你是谁、或要你的名片时用；不要主动反复发。"
 )
 
@@ -401,4 +403,7 @@ class IMessageToolsMixin:
             await self._sidecar_call("share_contact", {"chat_id": chat_id})
         except SidecarError as exc:
             return self._tool_failure("分享", exc)
-        return {"success": True, "content": "已把你的名字和头像分享给对方，对方手机上会提示是否保存"}
+        return {
+            "success": True,
+            "content": "已分享。对方不会收到新消息，而是在聊天顶部你的名字下面看到「更新」，点了才会改成 Photon 账号设置的名字和头像",
+        }
