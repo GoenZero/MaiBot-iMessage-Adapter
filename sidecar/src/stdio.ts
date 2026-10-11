@@ -59,9 +59,14 @@ export function logThrottled(level: LogLevel, message: string): void {
 // SDK 日志整理与连接状态（纯函数在 sdklog.ts）
 // ---------------------------------------------------------------------------
 
+/** 把连接状态变化告诉插件。 */
+export function emitLink(data: object): void {
+  writeFrame({ imsg: 1, t: "evt", event: "link", data });
+}
+
 function sdkConsole(level: LogLevel) {
   return (...args: unknown[]): void => {
-    const kind = trackLinkState(args, (data) => writeFrame({ imsg: 1, t: "evt", event: "link", data }));
+    const kind = trackLinkState(args, emitLink);
     // 断网期间 SDK 每次重试都会打一条，只记第一条；恢复时记一条
     if (kind === "repeat") return;
     if (kind === "recovered") {

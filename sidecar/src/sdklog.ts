@@ -24,8 +24,13 @@ export function summarizeArgs(args: unknown[]): string {
   return line.length > MAX_SDK_LOG ? `${line.slice(0, MAX_SDK_LOG)}…` : line;
 }
 
-/** 正在中断的消息流（按 label 区分；SDK 对消息、投票等各有一条流）。 */
+/**
+ * 正在中断的流（按 label 区分）。SDK 对每个号码开两条流：消息（imessage.messages:…）和投票
+ * （imessage.polls:…）。连接状态只看消息流：投票流平时几乎没有事件，而 SDK 只在重连后收到
+ * 第一个事件（或补齐了漏掉的事件）时才记「stream recovered」，投票流可能很久都不会记。
+ */
 const interruptedStreams = new Set<string>();
+let linkDown = false;
 
 function streamLabel(args: unknown[]): string {
   const attrs = args.find((arg) => typeof arg === "object" && arg !== null && !(arg instanceof Error)) as
@@ -34,7 +39,20 @@ function streamLabel(args: unknown[]): string {
   return String(attrs?.["spectrum.stream.label"] ?? "default");
 }
 
+function isMessageStream(label: string): boolean {
+  return label.startsWith("imessage.messages") || label === "default";
+}
+
 export type StreamLogKind = "interrupted" | "repeat" | "recovered" | "other";
+
+/** 确认连接正常（消息流恢复，或者收到了新消息）：清空中断记录，之前是中断状态就发 ok。 */
+export function markLinkHealthy(emit: (data: object) => void): void {
+  interruptedStreams.clear();
+  if (linkDown) {
+    linkDown = false;
+    emit({ state: "ok" });
+  }
+}
 
 /**
  * 根据 SDK 日志更新连接状态；整体状态变化时发 link 事件。
@@ -47,16 +65,29 @@ export function trackLinkState(args: unknown[], emit: (data: object) => void): S
   const label = streamLabel(args);
   if (/stream interrupted; reconnecting|stream persistently failing/.test(text)) {
     if (interruptedStreams.has(label)) return "repeat";
-    const wasHealthy = interruptedStreams.size === 0;
     interruptedStreams.add(label);
-    if (wasHealthy) emit({ state: "reconnecting", detail: summarizeArgs(args) });
+    if (!linkDown && isMessageStream(label)) {
+      linkDown = true;
+      emit({ state: "reconnecting", detail: summarizeArgs(args) });
+    }
     return "interrupted";
   }
-  if (/stream recovered/.test(text) && interruptedStreams.delete(label)) {
-    if (interruptedStreams.size === 0) emit({ state: "ok" });
-    return "recovered";
+  if (/stream recovered/.test(text)) {
+    if (isMessageStream(label)) {
+      // 消息流和投票流走同一条连接，消息流恢复就说明连接恢复了
+      const wasInterrupted = interruptedStreams.has(label);
+      markLinkHealthy(emit);
+      return wasInterrupted ? "recovered" : "other";
+    }
+    return interruptedStreams.delete(label) ? "recovered" : "other";
   }
   return "other";
+}
+
+/** 测试用：清空状态。 */
+export function resetLinkState(): void {
+  interruptedStreams.clear();
+  linkDown = false;
 }
 
 export function streamLabelOf(args: unknown[]): string {

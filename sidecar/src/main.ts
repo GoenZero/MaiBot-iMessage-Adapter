@@ -10,7 +10,8 @@
  * 退出码：0 正常退出；1 运行中出错（Python 会自动重启）；2 Photon 认证失败（不重启）。
  */
 // stdio 必须最先导入：它负责把所有杂项输出从协议通道里挪走
-import { log, logThrottled, registerSecret, writeFrame } from "./stdio.ts";
+import { emitLink, log, logThrottled, registerSecret, writeFrame } from "./stdio.ts";
+import { markLinkHealthy } from "./sdklog.ts";
 
 import { Spectrum } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
@@ -217,6 +218,8 @@ if (process.env.READ_TEXT_FILES !== "0") {
 
 try {
   for await (const [space, rawMessage] of app.messages) {
+    // 收到消息说明与 Photon 的连接是通的（SDK 的「已恢复」日志可能晚到或不出现）
+    markLinkHealthy(emitLink);
     spaces.set(space.id, space as unknown as SpaceLike);
     const message = rawMessage as unknown as MessageLike;
     for (const item of collectMessages(message)) handles.set(item.id, item as ActionMessage);

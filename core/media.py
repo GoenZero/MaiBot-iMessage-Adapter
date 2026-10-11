@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import base64
 import io
@@ -46,18 +46,29 @@ def is_heif(data: bytes, mime: str) -> bool:
     return data[4:8] == b"ftyp" and data[8:12] in HEIF_BRANDS
 
 
-def prepare_image(data: bytes, mime: str, max_edge: int, jpeg_quality: int = 85) -> Tuple[bytes, str]:
+def prepare_image(
+    data: bytes, mime: str, max_edge: int, jpeg_quality: int = 85, stats: Optional[Dict[str, Any]] = None
+) -> Tuple[bytes, str]:
     """把一张图片处理成适合交给 MaiBot 的样子，返回 (字节, MIME)。
 
-    出错时抛异常，由调用方降级成文字说明。
+    stats 不为 None 时记下像素尺寸和各步用时，供日志排查慢的原因。出错时抛异常，由调用方降级成文字说明。
     """
     from PIL import Image, ImageOps
 
     heif = is_heif(data, mime)
     if heif and not _register_heif():
         raise RuntimeError("缺少 pillow-heif，无法转换 HEIC 照片")
+    stats = stats if stats is not None else {}
+    lap = time.monotonic()
+
+    def step(name: str) -> None:
+        nonlocal lap
+        now = time.monotonic()
+        stats[name] = now - lap
+        lap = now
 
     with Image.open(io.BytesIO(data)) as image:
+        stats["size"] = image.size
         too_big = max_edge > 0 and max(image.size) > max_edge
         animated = bool(getattr(image, "is_animated", False))
         if not heif and (animated or (not too_big and len(data) <= REENCODE_ABOVE_BYTES)):
@@ -65,17 +76,23 @@ def prepare_image(data: bytes, mime: str, max_edge: int, jpeg_quality: int = 85)
             return data, mime
 
         image.load()
-        working = ImageOps.exif_transpose(image) or image
+        step("decode")
         if too_big:
-            working.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+            # 先缩小再摆正：缩小后只剩几百万像素，后面每一步都快得多，也少占内存
+            image.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+            step("resize")
+        working = ImageOps.exif_transpose(image) or image
 
         output = io.BytesIO()
         if working.mode in ("RGBA", "LA", "P") and not heif and mime == "image/png":
-            # 带透明的 PNG 保持 PNG
-            working.save(output, format="PNG", optimize=True)
-            return output.getvalue(), "image/png"
-        working.convert("RGB").save(output, format="JPEG", quality=jpeg_quality, optimize=True)
-        return output.getvalue(), "image/jpeg"
+            # 带透明的 PNG 保持 PNG。压缩级别用 3：比默认的 6 快几倍，体积只大一点
+            working.save(output, format="PNG", compress_level=3)
+            result = output.getvalue(), "image/png"
+        else:
+            working.convert("RGB").save(output, format="JPEG", quality=jpeg_quality, optimize=True)
+            result = output.getvalue(), "image/jpeg"
+        step("encode")
+        return result
 
 
 def load_image_file(path: str, mime: str, *, max_edge: int = 2048) -> Tuple[Optional[str], str]:
@@ -90,11 +107,19 @@ def load_image_file(path: str, mime: str, *, max_edge: int = 2048) -> Tuple[Opti
     if not data:
         return None, "图片是空的"
     started = time.monotonic()
+    stats: Dict[str, Any] = {}
     try:
-        prepared, out_mime = prepare_image(data, mime, max_edge)
+        prepared, out_mime = prepare_image(data, mime, max_edge, stats=stats)
         seconds = time.monotonic() - started
         if seconds >= 1.0:
-            logger.info("图片处理用时 %.1f 秒（%s，%.1fMB → %.1fMB）", seconds, mime, len(data) / 1048576, len(prepared) / 1048576)
+            width, height = stats.get("size", (0, 0))
+            steps = "，".join(
+                f"{label} {stats[key]:.1f} 秒" for key, label in (("decode", "解码"), ("resize", "缩小"), ("encode", "编码")) if key in stats
+            )
+            logger.info(
+                "图片处理用时 %.1f 秒（%s，%dx%d，%.1fMB → %.1fMB；%s）",
+                seconds, mime, width, height, len(data) / 1048576, len(prepared) / 1048576, steps,
+            )
     except Exception as exc:
         logger.warning("处理图片失败（%s，%d 字节）：%s", mime, len(data), exc)
         if is_heif(data, mime):

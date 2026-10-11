@@ -65,7 +65,7 @@ test("附件写入临时文件，超限时中止并清理", async () => {
 });
 
 test("SDK 日志整理成一行，并识别消息流中断与恢复", async () => {
-  const { summarizeArgs, trackLinkState } = await import("./sdklog.ts");
+  const { markLinkHealthy, resetLinkState, summarizeArgs, trackLinkState } = await import("./sdklog.ts");
   const error = Object.assign(new Error("No connection established.\nLast error: x"), { cause: new Error("ENETUNREACH 1.2.3.4:443") });
   const attrs = { "spectrum.stream.label": "imessage.messages:shared", "spectrum.stream.attempt": 2, "spectrum.stream.id": "abc" };
   const line = summarizeArgs(["[spectrum.stream]", "WARN", "stream interrupted; reconnecting", attrs, error]);
@@ -75,13 +75,29 @@ test("SDK 日志整理成一行，并识别消息流中断与恢复", async () =
 
   const events: object[] = [];
   const push = (data: object) => events.push(data);
+  const states = () => events.map((e) => (e as { state: string }).state);
+  const msgs = "imessage.messages:shared";
+  const polls = "imessage.polls:shared";
   const down = (label: string) => ["[spectrum.stream]", "WARN", "stream interrupted; reconnecting", { "spectrum.stream.label": label }];
   const up = (label: string) => ["[spectrum.stream]", "INFO", "stream recovered", { "spectrum.stream.label": label }];
-  assert.equal(trackLinkState(down("a"), push), "interrupted");
-  assert.equal(trackLinkState(down("a"), push), "repeat"); // 重试日志不再输出
-  assert.equal(trackLinkState(down("b"), push), "interrupted");
-  assert.equal(trackLinkState(up("a"), push), "recovered");
-  assert.equal(events.length, 1); // b 还没恢复
-  trackLinkState(up("b"), push);
-  assert.deepEqual(events.map((e) => (e as { state: string }).state), ["reconnecting", "ok"]);
+
+  resetLinkState();
+  assert.equal(trackLinkState(down(msgs), push), "interrupted");
+  assert.equal(trackLinkState(down(msgs), push), "repeat"); // 重试日志不再输出
+  assert.equal(trackLinkState(down(polls), push), "interrupted");
+  assert.deepEqual(states(), ["reconnecting"]);
+  // 真机：投票流重连后一直没有事件，不会记 recovered；只要消息流恢复，就算恢复
+  assert.equal(trackLinkState(up(msgs), push), "recovered");
+  assert.deepEqual(states(), ["reconnecting", "ok"]);
+  // 投票流的中断记录也一起清掉，下次断网时照常发 reconnecting
+  assert.equal(trackLinkState(down(polls), push), "interrupted");
+  assert.deepEqual(states(), ["reconnecting", "ok"]); // 只有投票流断：不算连接中断
+  assert.equal(trackLinkState(down(msgs), push), "interrupted");
+  assert.deepEqual(states(), ["reconnecting", "ok", "reconnecting"]);
+  // 收到新消息也说明连接正常
+  markLinkHealthy(push);
+  markLinkHealthy(push);
+  assert.deepEqual(states(), ["reconnecting", "ok", "reconnecting", "ok"]);
+  assert.equal(trackLinkState(down(msgs), push), "interrupted");
+  resetLinkState();
 });

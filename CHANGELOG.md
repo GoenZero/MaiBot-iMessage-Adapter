@@ -39,6 +39,12 @@
 - 改「Photon 号码」不再重启侧车，立即向 MaiBot 重新上报；日志会写「已向 MaiBot 重新上报机器人号码」。
 - 配置结构版本升到 2.1.0。MaiBot 只在版本升高时把新增的设置项（Photon 号码、iMessage 能力、图片处理）写回已有的 config.toml，升级后文件里就能看到这些项。
 
+### 真机测试第三轮返修
+
+- 修复：断网恢复后 `/imessage_status` 一直显示「连接中断」。SDK 对每个号码开两条流（消息和投票），投票流平时几乎没有事件，重连后一直不会记「已恢复」。现在连接状态只看消息流；另外，只要收到新消息，就认定连接正常。
+- 「引用回复」关闭档：给 AI 的能力说明里写明「引用回复已关闭」，AI 不会再说自己能引用。
+- 大图处理提速：先缩小再按方向摆正；带透明的 PNG 改用较快的压缩级别。本机测试 4032×3024 的 PNG：不透明的从 1.3 秒降到 0.5 秒，带透明的从 4.4 秒降到 1.2 秒。日志会写出图片像素尺寸，以及解码、缩小、编码各用了多久。
+
 ### 细节
 
 - 修复（首次真机部署发现）：打包后的侧车连不上 Photon，报「`createGrpcClient` needs the optional peer dependencies」。原因是 @photon-ai/advanced-imessage 会检查 gRPC 相关的包能否在文件旁边找到，而打包后这些包已在 sidecar.mjs 里，旁边没有 node_modules。现在打包时去掉这个检查，修补失败会让打包直接报错。新增回归测试：把打包产物放在没有 node_modules 的目录里，实际创建 gRPC 客户端。
@@ -53,4 +59,4 @@
 - 侧车日志中的 Project Secret 会被遮蔽。
 - 删除 `debug.py` 调试发送脚本，以及不再需要的 Python 依赖 websockets、tomlkit。
 - 插件声明需要 maibot-plugin-sdk 2.10.0 或以上。
-- 新增自动测试：侧车 31 项（`cd sidecar && npm run check`），Python 54 项（`python -m pytest tests`）。
+- 新增自动测试：侧车 31 项（`cd sidecar && npm run check`），Python 56 项（`python -m pytest tests`）。

@@ -75,6 +75,25 @@ def test_orientation_is_applied() -> None:
     assert decode(data).size == (200, 400)
 
 
+def test_orientation_is_applied_after_downscale() -> None:
+    # 先缩小再摆正：横拍 4000x2000 + 方向 6 → 缩到 2048x1024 → 摆正成 1024x2048
+    raw = heic_bytes((4000, 2000), exif_orientation=6)
+    stats: dict = {}
+    data, _ = prepare_image(raw, "image/heic", max_edge=2048, stats=stats)
+    assert decode(data).size == (1024, 2048)
+    assert sorted(stats["size"]) == [2000, 4000] and {"decode", "resize", "encode"} <= stats.keys()
+
+
+def test_big_jpeg_orientation_after_downscale() -> None:
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    buffer = io.BytesIO()
+    Image.new("RGB", (5000, 2500), (10, 120, 200)).save(buffer, format="JPEG", exif=exif.tobytes())
+    data, mime = prepare_image(buffer.getvalue(), "image/jpeg", max_edge=2048)
+    assert mime == "image/jpeg"
+    assert decode(data).size == (1024, 2048)
+
+
 def test_broken_heic_reports_failure(tmp_path: Path) -> None:
     path = tmp_path / "bad.heic"
     path.write_bytes(b"\x00\x00\x00\x18ftypheic" + b"\x00" * 64)

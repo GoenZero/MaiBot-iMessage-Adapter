@@ -33,6 +33,8 @@ class Capability:
     # 写进能力说明的一句话（只写工具说明里没有的内容）；返回空串表示不需要说明
     ai_note: Callable[[Any], str] = lambda config: ""
     is_configured: Callable[[Any], bool] = lambda config: True
+    # 能力关闭时写进说明的一句话：AI 容易凭常识以为自己能做，需要明说时才填
+    off_note: str = ""
 
     def enabled(self, config: Any) -> bool:
         return bool(self.is_enabled(config)) and bool(self.is_configured(config))
@@ -85,6 +87,7 @@ REGISTRY: Sequence[Capability] = (
         kind="auto",
         is_enabled=lambda c: _caps(c).reply_mode != "off",
         ai_note=_reply_note,
+        off_note="引用回复已关闭：你的回复都是普通消息，不会显示引用，别说你引用了哪句。",
     ),
     Capability(
         key="markdown",
@@ -133,7 +136,7 @@ def all_tool_names() -> set[str]:
 
 def build_brief(config: Any) -> str:
     """生成给 AI 的短说明（目标 200 token 以内）。内容只随配置变化，便于模型侧缓存。"""
-    notes = [note for cap in enabled_capabilities(config) if (note := cap.ai_note(config))]
+    notes = [note for cap in REGISTRY if (note := cap.ai_note(config) if cap.enabled(config) else cap.off_note)]
     if not notes:
         return ""
     lines = ["[iMessage 能力说明] 你正通过 iMessage 和对方一对一私聊。"]

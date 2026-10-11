@@ -68,6 +68,9 @@ def test_disabled_capabilities_vanish_from_brief_and_tools():
     brief = build_brief(config)
     assert "Markdown" not in brief and "set_quote" not in brief
     assert "⏹ 点赞回应（Tapback）" in status_lines(config)
+    # 引用关了要明说，否则 AI 会以为自己还能引用（真机测试发现）
+    assert "引用回复已关闭" in brief
+    assert "引用回复已关闭" not in build_brief(config_with())
 
 
 def test_brief_is_short():
