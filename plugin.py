@@ -242,10 +242,24 @@ class IMessageAdapterPlugin(MaiBotPlugin):
                 message=message,
                 external_message_id=message_id,
             )
-            if not accepted:
-                self.ctx.logger.debug("MaiBot 未接收入站消息：%s", message_id)
         except Exception as exc:
             self.ctx.logger.error("注入入站消息失败：%s", exc)
+            return
+        if not accepted:
+            self.ctx.logger.debug("MaiBot 未接收入站消息：%s", message_id)
+            return
+        if self.config.capabilities.read_receipts and chat_id and message_id:
+            self._spawn(self._mark_read(chat_id, message_id))
+
+    async def _mark_read(self, chat_id: str, message_id: str) -> None:
+        """自动发已读：失败只记日志。"""
+        supervisor = self._supervisor
+        if supervisor is None:
+            return
+        try:
+            await supervisor.request("mark_read", {"chat_id": chat_id, "message_id": message_id}, timeout=ACTION_TIMEOUT)
+        except SidecarError as exc:
+            self.ctx.logger.warning("发送已读失败 %s", exc)
 
     """═══════════════════════════════════════════════
     出站：MaiBot → iMessage

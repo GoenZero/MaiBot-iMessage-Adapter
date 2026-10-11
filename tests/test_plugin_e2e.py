@@ -202,3 +202,31 @@ def test_react_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     reacts = [op for op in sidecar_ops(tmp_path) if op["op"] == "react"]
     assert reacts[0]["args"] == {"chat_id": "+1", "message_id": "m1", "kind": "love"}
     assert len(reacts) == 2
+
+
+def test_read_receipts_follow_toggle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=True)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: len([op for op in sidecar_ops(tmp_path) if op["op"] == "mark_read"]) == 3)
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    reads = [op["args"] for op in sidecar_ops(tmp_path) if op["op"] == "mark_read"]
+    assert reads[0] == {"chat_id": "any;-;+1", "message_id": "m1"}
+
+    (tmp_path / "ops.jsonl").unlink()
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=True)
+    data = plugin.get_plugin_config_data()
+    data["capabilities"]["read_receipts"] = False
+    plugin.set_plugin_config(data)
+
+    async def main_off() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: len(host.of("host.route_message")) == 3)
+        await asyncio.sleep(0.3)
+        await plugin.on_unload()
+
+    asyncio.run(main_off())
+    assert not [op for op in sidecar_ops(tmp_path) if op["op"] == "mark_read"]
