@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"src/**/*.test.ts\"",
+    "test": "node --test \"src/**/*.test.ts\" \"test/**/*.test.mjs\"",
     "build": "node build.mjs",
     "verify-bundle": "node build.mjs --verify",
     "check": "npm run typecheck && npm test && npm run verify-bundle"

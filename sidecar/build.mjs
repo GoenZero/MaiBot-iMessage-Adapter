@@ -6,6 +6,8 @@
 //
 // 树莓派上不运行本脚本：dist/ 随仓库提交，设备上只需要 node 运行 dist/sidecar.mjs。
 import { build } from "esbuild";
+
+import { buildOptions } from "./build-config.mjs";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -19,29 +21,20 @@ mkdirSync(outDir, { recursive: true });
 const lock = JSON.parse(readFileSync(join(here, "package-lock.json"), "utf8"));
 const spectrumVersion = lock.packages["node_modules/@spectrum-ts/core"].version;
 
-const result = await build({
-  entryPoints: [join(here, "src/main.ts")],
-  outfile: join(outDir, "sidecar.mjs"),
-  bundle: true,
-  platform: "node",
-  format: "esm",
-  target: "node22",
-  minifyWhitespace: true,
-  minifySyntax: true,
-  keepNames: true,
-  legalComments: "none",
-  metafile: true,
-  logLevel: "warning",
-  define: { __SPECTRUM_VERSION__: JSON.stringify(spectrumVersion) },
-  // 部分依赖是 CommonJS，打包成 ESM 后需要一个 require
-  banner: {
-    js: [
-      "// MaiBot iMessage 适配器侧车（自动生成，请勿手改；源码见 sidecar/src，许可证见 THIRD_PARTY_LICENSES.txt）",
-      "import { createRequire as __createRequire } from 'node:module';",
-      "const require = __createRequire(import.meta.url);",
-    ].join("\n"),
-  },
-});
+const stats = { patched: 0 };
+const result = await build(
+  buildOptions({
+    entryPoints: [join(here, "src/main.ts")],
+    outfile: join(outDir, "sidecar.mjs"),
+    define: { __SPECTRUM_VERSION__: JSON.stringify(spectrumVersion) },
+    banner: "// MaiBot iMessage 适配器侧车（自动生成，请勿手改；源码见 sidecar/src，许可证见 THIRD_PARTY_LICENSES.txt）",
+    stats,
+  }),
+);
+if (stats.patched !== 1) {
+  console.error(`advanced-imessage 的 gRPC 依赖检查修补次数为 ${stats.patched}，应为 1`);
+  process.exit(1);
+}
 
 // ---- 汇总被打包进去的第三方包的许可证 ----
 const packageRoots = new Set();

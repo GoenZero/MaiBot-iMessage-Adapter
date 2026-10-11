@@ -24,6 +24,8 @@
 
 ### 细节
 
+- 修复（首次真机部署发现）：打包后的侧车连不上 Photon，报「`createGrpcClient` needs the optional peer dependencies」。原因是 @photon-ai/advanced-imessage 会检查 gRPC 相关的包能否在文件旁边找到，而打包后这些包已在 sidecar.mjs 里，旁边没有 node_modules。现在打包时去掉这个检查，修补失败会让打包直接报错。新增回归测试：把打包产物放在没有 node_modules 的目录里，实际创建 gRPC 客户端。
+
 - spectrum-ts 从 8.2.2 升级到 12.10.1，改为直接依赖 `@spectrum-ts/core` 和 `@spectrum-ts/imessage`，并锁定精确版本。理由：只有新版会转发对方已读回执，能识别语音类型，附件带传输状态；去掉了本地模式和需要现场编译的模块，打包后只含 86 个第三方包。
 - 类型检查用 TypeScript 6.0.3，打包用 esbuild 0.28.2，只在开发时用。TypeScript 7 不在 spectrum-ts 12.10.1 声明支持的范围（^5 或 ^6）内。
 - 已知：spectrum-ts 依赖的 OpenTelemetry 组件有一条中危公告（GHSA-8988-4f7v-96qf，W3C Baggage 解析时内存无上限）。上游暂无修复。侧车不接收外部 HTTP 请求，遥测默认关闭，不受影响。
@@ -34,4 +36,4 @@
 - 侧车日志中的 Project Secret 会被遮蔽。
 - 删除 `debug.py` 调试发送脚本，以及不再需要的 Python 依赖 websockets、tomlkit。
 - 插件声明需要 maibot-plugin-sdk 2.10.0 或以上。
-- 新增自动测试：侧车 27 项（`cd sidecar && npm run check`），Python 46 项（`python -m pytest tests`）。
+- 新增自动测试：侧车 29 项（`cd sidecar && npm run check`），Python 46 项（`python -m pytest tests`）。
