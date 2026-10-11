@@ -31,6 +31,7 @@ from .core.node_runtime import resolve_node
 from .core.outbound import build_outbound_plan, resolve_target
 from .core.planner import adjust_planner_request
 from .core.sessions import SessionDirectory
+from .core.typing import TypingController
 
 if TYPE_CHECKING:
     from maibot_sdk import PluginConfigBase
@@ -73,6 +74,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         self._last_error: str = ""
         self._sessions = SessionDirectory(self._fetch_imessage_streams)
         self._background: set[asyncio.Task[Any]] = set()
+        self._typing: Optional[TypingController] = None
 
     """═══════════════════════════════════════════════
     生命周期
@@ -119,6 +121,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         shutil.rmtree(self._media_dir, ignore_errors=True)
         self._media_dir.mkdir(parents=True, exist_ok=True)
 
+        self._typing = TypingController(self._send_typing, self.ctx.logger)
         self._supervisor = SidecarSupervisor(
             logger=self.ctx.logger,
             on_event=self._on_sidecar_event,
@@ -132,6 +135,9 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         )
 
     async def _stop_connection(self) -> None:
+        typing, self._typing = self._typing, None
+        if typing is not None:
+            await typing.close()
         supervisor, self._supervisor = self._supervisor, None
         if supervisor is not None:
             await supervisor.stop()
@@ -251,6 +257,28 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         if self.config.capabilities.read_receipts and chat_id and message_id:
             self._spawn(self._mark_read(chat_id, message_id))
 
+    async def _send_typing(self, chat_id: str, state: str) -> None:
+        supervisor = self._supervisor
+        if supervisor is not None:
+            await supervisor.request("typing", {"chat_id": chat_id, "state": state}, timeout=ACTION_TIMEOUT)
+
+    @HookHandler(
+        "maisaka.replyer.before_request",
+        name="imessage_typing_start",
+        description="AI 开始生成回复时，在 iMessage 里显示「正在输入」",
+        mode=HookMode.OBSERVE,
+        timeout_ms=5000,
+        error_policy=ErrorPolicy.SKIP,
+    )
+    async def on_replyer_request(self, **kwargs: Any) -> None:
+        typing = self._typing
+        if typing is None or not self.config.capabilities.typing_indicator:
+            return None
+        chat_id = await self._chat_for_stream(str(kwargs.get("session_id") or ""))
+        if chat_id:
+            await typing.start(chat_id)
+        return None
+
     async def _mark_read(self, chat_id: str, message_id: str) -> None:
         """自动发已读：失败只记日志。"""
         supervisor = self._supervisor
@@ -307,6 +335,9 @@ class IMessageAdapterPlugin(MaiBotPlugin):
             return {"success": False, "error": exc.message}
         finally:
             plan.cleanup()
+            # 发出（或失败）后关掉「正在输入」
+            if self._typing is not None:
+                self._spawn(self._typing.finish(chat_id))
 
         message_ids = [str(x) for x in result.get("message_ids", []) if x]
         if result.get("partial"):

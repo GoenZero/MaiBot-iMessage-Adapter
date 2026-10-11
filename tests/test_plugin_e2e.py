@@ -230,3 +230,26 @@ def test_read_receipts_follow_toggle(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     asyncio.run(main_off())
     assert not [op for op in sidecar_ops(tmp_path) if op["op"] == "mark_read"]
+
+
+def test_typing_indicator_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    outbound = {
+        "message_info": {"additional_config": {"platform_io_target_user_id": "+1"}},
+        "raw_message": [{"type": "text", "data": "好"}],
+    }
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        await plugin.on_replyer_request(session_id="s-qq")  # 别的平台：不显示
+        await plugin.on_replyer_request(session_id="s-imessage")
+        result = await plugin.send_to_imessage(outbound)
+        assert result["success"] is True
+        await wait_for(lambda: [op["op"] for op in sidecar_ops(tmp_path)][-1:] == ["typing"] and len(sidecar_ops(tmp_path)) >= 3)
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    ops = [(op["op"], op["args"].get("state")) for op in sidecar_ops(tmp_path) if op["op"] in ("typing", "send")]
+    assert ops == [("typing", "start"), ("send", None), ("typing", "stop")]
+    assert [op["args"]["chat_id"] for op in sidecar_ops(tmp_path) if op["op"] == "typing"] == ["+1", "+1"]
