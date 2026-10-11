@@ -13,6 +13,7 @@ DEFAULT_MAX_RETRIES = 3
 DEFAULT_RETRY_INTERVAL = 3.0
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 50
 DEFAULT_HANDLE_CACHE_SIZE = 500
+DEFAULT_IMAGE_MAX_EDGE = 2048
 
 
 def _schema_i18n(
@@ -238,9 +239,35 @@ class SidecarBridgeConfig(PluginConfigBase):
     )
 
 
+class MediaConfig(PluginConfigBase):
+    """收到图片时的处理方式。"""
+
+    __ui_label__: ClassVar[str] = "图片处理"
+    __ui_order__: ClassVar[int] = 3
+
+    image_max_edge: int = Field(
+        default=DEFAULT_IMAGE_MAX_EDGE,
+        description="收到的图片交给 AI 之前，长边超过多少像素就缩小。填 0 表示不缩小。",
+        json_schema_extra={
+            "hint": "iPhone 的 HEIC 照片会统一转成 JPEG。识图用不上原图的上千万像素，缩小能省内存和模型流量。",
+            "i18n": _schema_i18n(
+                label_en="Max image edge (px)",
+                label_ja="画像の最大辺（px）",
+                label_ko="이미지 최대 변(px)",
+                hint_en="HEIC photos are always converted to JPEG. 0 disables downscaling.",
+                hint_ja="HEIC 写真は常に JPEG に変換されます。0 で縮小しません。",
+                hint_ko="HEIC 사진은 항상 JPEG로 변환됩니다. 0이면 축소하지 않습니다.",
+            ),
+            "label": "图片最大边长（像素）",
+            "order": 0,
+        },
+    )
+
+
 class IMessageAdapterConfig(PluginConfigBase):
     """iMessage 适配器插件完整配置。"""
 
     plugin: IMessagePluginOptions = Field(default_factory=IMessagePluginOptions)
     photon: PhotonServerConfig = Field(default_factory=PhotonServerConfig)
     bridge: SidecarBridgeConfig = Field(default_factory=SidecarBridgeConfig)
+    media: MediaConfig = Field(default_factory=MediaConfig)

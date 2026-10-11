@@ -27,6 +27,7 @@ git clone https://github.com/GoenZero/MaiBot-iMessage-Adapter.git
 | MaiBot | 插件 SDK ≥ 2.10.0（MaiBot 1.3.5 起） | 插件宿主 |
 | Node.js | ≥ 22 | 运行侧车。插件依次查找：WebUI 填写的路径 → 系统 PATH → 插件目录下的 `.nodeenv/` → 自动下载最新 LTS 版 |
 | nodeenv (PyPI) | ≥ 1.10.0 | 没有 Node.js 时自动下载，MaiBot 会自动安装这个依赖 |
+| pillow-heif (PyPI) | ≥ 1.8.0 | 把 iPhone 的 HEIC 照片转成 JPEG（有树莓派 ARM64 预编译包），MaiBot 会自动安装 |
 | Photon 账号 | — | 在 [app.photon.codes](https://app.photon.codes) 注册 |
 
 侧车已经在开发时打包成单个文件 `sidecar/dist/sidecar.mjs` 随仓库发布，**设备上不需要 npm install，也不需要编译**。首次启用时，如果系统里没有 Node.js，插件会自动下载（约 1–2 分钟），之后直接启动。
@@ -58,6 +59,7 @@ MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.j
 | `[bridge]` | `max_attachment_size_mb` | 50 | 单个附件上限（MB），收发都适用 |
 | `[bridge]` | `handle_cache_size` | 500 | 记住最近多少条消息，供引用、点赞使用 |
 | `[bridge]` | `node_path` | "" | Node.js 路径，留空自动查找 |
+| `[media]` | `image_max_edge` | 2048 | 收到的图片长边超过多少像素就缩小，0 表示不缩小；HEIC 一律转成 JPEG |
 
 从 0.1.x 升级时，MaiBot 会自动把旧配置迁移到新结构，已填写的项目 ID、密钥等会保留；旧的「桥接端口」不再需要。
 

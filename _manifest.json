@@ -28,6 +28,11 @@
       "type": "python_package",
       "name": "nodeenv",
       "version_spec": ">=1.10.0"
+    },
+    {
+      "type": "python_package",
+      "name": "pillow-heif",
+      "version_spec": ">=1.8.0"
     }
   ],
   "plugin_type": "adapter",

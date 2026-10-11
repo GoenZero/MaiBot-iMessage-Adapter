@@ -16,6 +16,7 @@ from maibot_sdk import Command, MaiBotPlugin, MessageGateway
 
 import asyncio
 import contextlib
+import functools
 import os
 import shutil
 import time
@@ -162,7 +163,8 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         if sender_id and chat_id:
             self._chat_by_user[sender_id] = chat_id
 
-        message = await asyncio.to_thread(build_maibot_message, data, load_image_file)
+        loader = functools.partial(load_image_file, max_edge=max(0, self.config.media.image_max_edge))
+        message = await asyncio.to_thread(build_maibot_message, data, loader)
         message_id = str(data.get("message_id", ""))
         try:
             accepted = await self.ctx.gateway.route_message(

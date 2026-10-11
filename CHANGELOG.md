@@ -12,6 +12,7 @@
 - **不再整条丢消息**：用户「回复」某句话发来的消息、文字加图片的组合、多张图片、名片，以前会被整条丢掉，现在都会交给 AI。引用关系也一并保留，AI 能看到用户引用的是哪一句。语音、文件、链接、投票、卡片等暂时处理不了的内容，变成一句说明交给 AI。
 - **侧车打包发布**：侧车在开发时打包成一个文件（`sidecar/dist/sidecar.mjs`）随仓库提交。设备上不再执行 npm install，也不再编译，首次启动只需准备 Node.js。
 - **自动重启不再放弃**：前几次快速重试，之后间隔逐渐拉长（最长 5 分钟），断网恢复后能自己连上。只有 Photon 认证失败才停，修改配置后会自动重连。
+- **HEIC 照片转 JPEG**：iPhone 默认拍的 HEIC/HEIF 照片在适配器里转成 JPEG 再交给 MaiBot，并按照片记录的方向摆正。长边超过 2048 像素的图片会缩小（WebUI「图片处理」可调），超过 4MB 的大图会重新压缩。新增 Python 依赖 pillow-heif。
 - **手动重连不再重复重启**：修复 `/imessage_reconnect` 和自动重启同时触发、侧车被拉起两次的问题。
 
 ### 细节
@@ -26,4 +27,4 @@
 - 侧车日志中的 Project Secret 会被遮蔽。
 - 删除 `debug.py` 调试发送脚本，以及不再需要的 Python 依赖 websockets、tomlkit。
 - 插件声明需要 maibot-plugin-sdk 2.10.0 或以上。
-- 新增自动测试：侧车 27 项（`cd sidecar && npm run check`），Python 22 项（`python -m pytest tests`）。
+- 新增自动测试：侧车 27 项（`cd sidecar && npm run check`），Python 29 项（`python -m pytest tests`）。
