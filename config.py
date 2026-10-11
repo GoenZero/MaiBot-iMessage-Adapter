@@ -7,7 +7,7 @@ from typing import ClassVar, Dict, Literal, Optional
 from maibot_sdk import Field, PluginConfigBase
 
 # 配置结构有增减时提升版本：MaiBot 只在版本升高时把新字段写回已有的 config.toml
-SUPPORTED_CONFIG_VERSION = "2.1.0"
+SUPPORTED_CONFIG_VERSION = "2.2.0"
 PLUGIN_VERSION = "0.2.0"
 
 DEFAULT_MAX_RETRIES = 3
@@ -412,6 +412,44 @@ class MediaConfig(PluginConfigBase):
     )
 
 
+class VoiceConfig(PluginConfigBase):
+    """语音消息。"""
+
+    __ui_label__: ClassVar[str] = "语音"
+    __ui_order__: ClassVar[int] = 5
+
+    transcribe: bool = Field(
+        default=False,
+        description="收到语音时，用 MaiBot「模型配置」里的语音识别任务把它转成文字交给 AI。关闭时（或识别失败时），AI 会得体地告诉对方暂时听不了语音。",
+        json_schema_extra={
+            "hint": "需要先在 MaiBot 里配置语音识别模型。iPhone 的语音是 CAF 格式，识别服务不一定支持，开启前请先确认。",
+            "i18n": _schema_i18n(
+                label_en="Transcribe voice messages",
+                label_ja="音声メッセージを文字起こし",
+                label_ko="음성 메시지 받아쓰기",
+                hint_en="Requires a speech-recognition model in MaiBot. iPhone voice notes are CAF files; check that your service accepts them.",
+                hint_ja="MaiBot で音声認識モデルの設定が必要です。iPhone の音声は CAF 形式です。",
+                hint_ko="MaiBot에 음성 인식 모델이 설정되어 있어야 합니다. iPhone 음성은 CAF 형식입니다.",
+            ),
+            "label": "语音转文字",
+            "order": 0,
+        },
+    )
+    tts_service: str = Field(
+        default="",
+        description="预留位置：以后接入语音合成（让 AI 发语音）时，在这里填写服务地址。当前版本不会使用，AI 也看不到发语音的能力。",
+        json_schema_extra={
+            "i18n": _schema_i18n(
+                label_en="Text-to-speech service (reserved)",
+                label_ja="音声合成サービス（予約）",
+                label_ko="음성 합성 서비스(예약)",
+            ),
+            "label": "语音合成服务（预留）",
+            "order": 1,
+        },
+    )
+
+
 class IMessageAdapterConfig(PluginConfigBase):
     """iMessage 适配器插件完整配置。"""
 
@@ -420,3 +458,4 @@ class IMessageAdapterConfig(PluginConfigBase):
     bridge: SidecarBridgeConfig = Field(default_factory=SidecarBridgeConfig)
     capabilities: CapabilitiesConfig = Field(default_factory=CapabilitiesConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)

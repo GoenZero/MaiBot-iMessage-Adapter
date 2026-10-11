@@ -35,6 +35,8 @@ class Capability:
     is_configured: Callable[[Any], bool] = lambda config: True
     # 能力关闭时写进说明的一句话：AI 容易凭常识以为自己能做，需要明说时才填
     off_note: str = ""
+    # /imessage_status 里，能力未开启时附加的说明
+    status_hint: str = ""
 
     def enabled(self, config: Any) -> bool:
         return bool(self.is_enabled(config)) and bool(self.is_configured(config))
@@ -133,6 +135,18 @@ REGISTRY: Sequence[Capability] = (
         is_enabled=lambda c: _caps(c).link_preview,
     ),
     Capability(
+        key="voice_send",
+        title="发语音",
+        photon_call="voice()",
+        plan="free",
+        kind="tool",
+        is_enabled=lambda c: True,
+        # 预留：还没有接入语音合成服务，所以永远视为「未配置」，AI 看不到这项能力。
+        # 接入时：实现工具、在 tool_names 里登记，并改成检查 c.voice.tts_service。
+        is_configured=lambda c: False,
+        status_hint="预留，尚未接入语音合成服务",
+    ),
+    Capability(
         key="reply",
         title="引用回复",
         photon_call="message.reply",
@@ -210,7 +224,10 @@ def status_lines(config: Any) -> List[str]:
     for cap in REGISTRY:
         if cap.kind == "inbound":
             continue
-        mark = "✅" if cap.enabled(config) else "⏹"
+        enabled = cap.enabled(config)
+        mark = "✅" if enabled else "⏹"
         extra = f"（{REPLY_MODE_TEXT[_caps(config).reply_mode]}）" if cap.key == "reply" else ""
+        if not enabled and cap.status_hint:
+            extra = f"（{cap.status_hint}）"
         lines.append(f"{mark} {cap.title}{extra}")
     return lines

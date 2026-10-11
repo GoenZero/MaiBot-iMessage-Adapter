@@ -57,7 +57,10 @@ def kwargs():
 def test_default_everything_on():
     config = config_with()
     assert disabled_tool_names(config) == set()
-    assert all(line.startswith("✅") for line in status_lines(config))
+    lines = status_lines(config)
+    assert all(line.startswith("✅") for line in lines if "发语音" not in line)
+    # 发语音只做了预留：默认配置下也显示未开启，并说明原因
+    assert "⏹ 发语音（预留，尚未接入语音合成服务）" in lines
     brief = build_brief(config)
     assert "set_quote" in brief and "quote=" in brief and "Markdown" in brief
 
