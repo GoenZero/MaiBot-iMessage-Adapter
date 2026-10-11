@@ -28,7 +28,7 @@ from .core.capabilities import all_tool_names, build_brief, disabled_tool_names,
 from .core.inbound import build_maibot_message
 from .core.media import load_image_file
 from .core.node_runtime import resolve_node
-from .core.outbound import build_outbound_plan, resolve_target
+from .core.outbound import build_outbound_plan, looks_like_markdown, resolve_target
 from .core.planner import adjust_planner_request
 from .core.sessions import SessionDirectory
 from .core.typing import TypingController
@@ -330,6 +330,10 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         if not plan.parts:
             return {"success": False, "error": "没有可发送的内容"}
 
+        if self.config.capabilities.markdown:
+            for part in plan.parts:
+                if part["type"] == "text" and looks_like_markdown(part["text"]):
+                    part["markdown"] = True
         reply_to = self._choose_reply_target(chat_id, plan.reply_to)
         args: Dict[str, Any] = {"chat_id": chat_id, "parts": plan.parts}
         if reply_to:

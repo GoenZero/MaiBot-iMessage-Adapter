@@ -294,3 +294,28 @@ def test_reply_mode_always(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 def test_reply_mode_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sends = _reply_mode_run(tmp_path, monkeypatch, "off")
     assert [s.get("reply_to") for s in sends] == [None, None, None]
+
+
+def test_markdown_flag_follows_toggle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(enabled: bool) -> list[dict[str, Any]]:
+        (tmp_path / "ops.jsonl").unlink(missing_ok=True)
+        plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+        data = plugin.get_plugin_config_data()
+        data["capabilities"]["markdown"] = enabled
+        plugin.set_plugin_config(data)
+        message = {
+            "message_info": {"additional_config": {"platform_io_target_user_id": "+1"}},
+            "raw_message": [{"type": "text", "data": "记住**这个**"}],
+        }
+
+        async def main() -> None:
+            await plugin.on_load()
+            await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+            assert (await plugin.send_to_imessage(message))["success"]
+            await plugin.on_unload()
+
+        asyncio.run(main())
+        return [op["args"]["parts"][0] for op in sidecar_ops(tmp_path) if op["op"] == "send"]
+
+    assert run(True) == [{"type": "text", "text": "记住**这个**", "markdown": True}]
+    assert run(False) == [{"type": "text", "text": "记住**这个**"}]

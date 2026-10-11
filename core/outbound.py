@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import base64
 import binascii
+import re
 import secrets
 
 
@@ -33,6 +34,24 @@ class OutboundPlan:
         for path in self.temp_files:
             path.unlink(missing_ok=True)
         self.temp_files.clear()
+
+
+_MARKDOWN_PATTERN = re.compile(
+    r"(\*\*[^*\n]+\*\*)"  # **粗体**
+    r"|(__[^_\n]+__)"  # __粗体__
+    r"|(~~[^~\n]+~~)"  # ~~删除线~~
+    r"|(`[^`\n]+`)"  # `代码`
+    r"|(\[[^\]\n]+\]\(https?://[^)\s]+\))"  # [文字](链接)
+    r"|(^\s{0,3}#{1,6}\s+\S)"  # # 标题
+    r"|(^\s{0,3}[-*+]\s+\S.*\n\s{0,3}[-*+]\s+\S)"  # 至少两行的列表
+    r"|(^\s{0,3}\d+[.)]\s+\S.*\n\s{0,3}\d+[.)]\s+\S)",  # 至少两行的编号列表
+    re.MULTILINE,
+)
+
+
+def looks_like_markdown(text: str) -> bool:
+    """文字里有明确的 Markdown 语法才按 Markdown 渲染；普通聊天文字（含单个星号、单行「- 」）不受影响。"""
+    return bool(_MARKDOWN_PATTERN.search(text))
 
 
 def sniff_image_mime(data: bytes) -> str:

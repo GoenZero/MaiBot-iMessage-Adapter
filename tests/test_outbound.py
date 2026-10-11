@@ -68,3 +68,12 @@ def test_resolve_target_uses_platform_io_user_not_bot():
     }
     assert resolve_target(message) == "+86138"
     assert resolve_target({"message_info": {"user_info": {"user_id": "+1BOT"}, "additional_config": {}}}) == ""
+
+
+def test_markdown_detection():
+    from imessage_adapter_under_test.core.outbound import looks_like_markdown
+
+    for text in ("这是**重点**", "用 `pip install` 装", "# 标题\n内容", "- 苹果\n- 香蕉", "1. 起床\n2. 刷牙", "[官网](https://example.com)", "~~划掉~~"):
+        assert looks_like_markdown(text), text
+    for text in ("你好呀", "5*3=15", "- 就一行", "今天 #心情 不错", "哈哈*", "1. 只有一行", "a_b_c"):
+        assert not looks_like_markdown(text), text
