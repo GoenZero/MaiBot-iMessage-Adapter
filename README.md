@@ -73,6 +73,7 @@ MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.j
 | `[capabilities]` | `share_contact` | true | 你要求时，AI 可以分享机器人账号的名字和头像 |
 | `[capabilities]` | `link_preview` | true | 一段回复只有一个链接时，以链接预览卡片发出 |
 | `[capabilities]` | `notify_reactions` | true | 对方点赞、在投票里选了选项时告诉 AI |
+| `[capabilities]` | `notify_edits` | true | 对方编辑、撤回自己的消息时告诉 AI，并附上原来那句 |
 | `[capabilities]` | `notify_read` | true | 对方读了 AI 的消息时告诉 AI（同一批只提醒一次） |
 | `[media]` | `image_max_edge` | 2048 | 收到的图片长边超过多少像素就缩小，0 表示不缩小；HEIC 一律转成 JPEG |
 | `[voice]` | `transcribe` | false | 收到语音时用 MaiBot 的语音识别转成文字（要先在 MaiBot 配好语音识别模型）。关闭时 AI 会请对方改发文字 |
@@ -128,9 +129,9 @@ MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码，否则
 | 长按某句话「回复」 | 消息本身，并标明引用的是哪一句 |
 | 联系人名片 | 姓名、电话、邮箱、单位 |
 | .txt、.md 等文本文件 | 文件内容（最多 6000 字） |
-| 语音 | 开启「语音转文字」时是转写结果；否则是一句说明，并请 AI 告诉对方暂时听不了、请对方打字 |
+| 语音 | 开启「语音转文字」时是「[语音消息] 转写结果」；否则是「[语音消息（约 N 秒）]」，能力说明会告诉 AI 请对方打字 |
 | 其他文件、链接、投票、应用卡片 | 一句说明 |
-| 给消息点赞、在投票里选选项、已读 | 一条系统通知，例如 `<imessage_event>对方给你的消息「晚安」点了「爱心」回应</imessage_event>`。不会叫醒 AI，AI 下一轮能看到 |
+| 给消息点赞（或取消）、在投票里选选项、编辑或撤回自己的消息、已读 | 一条系统通知，例如 `<imessage_event>对方给你的消息「晚安」点了「爱心」回应</imessage_event>`。不会叫醒 AI，AI 下一轮能看到 |
 | 其他不认识的内容 | 「对方发了一条暂不支持的内容：…」 |
 
 任何消息都不会被整条丢掉。

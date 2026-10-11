@@ -51,7 +51,7 @@ def make_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, emit: bool) 
     plugin._set_context(PluginContext("com.galeros.imessage_adapter", host.rpc, paths))
     plugin.set_plugin_config(
         {
-            "plugin": {"enabled": True, "config_version": "2.2.0"},
+            "plugin": {"enabled": True, "config_version": "2.3.0"},
             "photon": {"project_id": "pid", "project_secret": "TOPSECRET"},
             "bridge": {"retry_interval": 1.0},
         }
@@ -124,7 +124,7 @@ def test_inbound_and_outbound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 def test_disabled_plugin_stays_idle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
-    plugin.set_plugin_config({"plugin": {"enabled": False, "config_version": "2.2.0"}, "photon": {"project_id": "p", "project_secret": "s"}})
+    plugin.set_plugin_config({"plugin": {"enabled": False, "config_version": "2.3.0"}, "photon": {"project_id": "p", "project_secret": "s"}})
 
     async def main() -> None:
         await plugin.on_load()
