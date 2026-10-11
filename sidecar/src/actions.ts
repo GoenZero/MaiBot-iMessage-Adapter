@@ -14,6 +14,7 @@ import type { MessageLike } from "./convert.ts";
 import type { LruCache } from "./handles.ts";
 import { readOutboundFile } from "./media.ts";
 import { BridgeError, optionalString, requireString } from "./protocol.ts";
+import { rememberSentPoll } from "./polls.ts";
 import { unsupportedMark, unsupportedSince } from "./sdklog.ts";
 
 /** 可操作的消息对象（SDK Message 的最小形状）。 */
@@ -211,6 +212,13 @@ export class Actions {
       throw new BridgeError("NOT_DELIVERED", "Photon 没有返回消息编号，内容可能被判定为不支持而跳过");
     }
     for (const message of sent) this.deps.handles.set(message.id, message);
+    // 记下 AI 发起的投票的标题：Photon 送回来的投票事件没有标题（见 polls.ts）
+    if (Array.isArray(args.parts) && sent.length === args.parts.length) {
+      (args.parts as OutPart[]).forEach((part, index) => {
+        const message = sent[index];
+        if (part?.type === "poll" && message && typeof part.title === "string") rememberSentPoll(message.id, part.title.trim());
+      });
+    }
     return {
       message_ids: sent.map((message) => message.id),
       quoted: Boolean(target?.reply),

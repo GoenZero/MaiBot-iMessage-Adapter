@@ -3,7 +3,7 @@
 // 「createGrpcClient needs the optional peer dependencies」导致连不上 Photon 的问题。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -60,4 +60,13 @@ test("不修补时能复现问题（证明测试有效）", async () => {
 test("修补后打包的 gRPC 客户端可以创建", async () => {
   const output = await bundleAndRun(true);
   assert.match(output, /GRPC_CLIENT_OK/, output);
+});
+
+test("打包产物里，投票的空标题会换成占位标题（否则对方的投票全部被丢掉）", async () => {
+  const { UNTITLED_POLL } = await import("../build-config.mjs");
+  const polls = await import("../src/polls.ts");
+  assert.equal(polls.UNTITLED_POLL, UNTITLED_POLL); // 打包补丁和侧车用的是同一个占位标题
+  const bundled = readFileSync(join(here, "..", "dist", "sidecar.mjs"), "utf8");
+  // 打包时变量名会被改（例如 input3），只认结构
+  assert.match(bundled, new RegExp(`toCachedPoll=.{0,60}title:\\w+\\.title\\|\\|${JSON.stringify(UNTITLED_POLL)}`));
 });

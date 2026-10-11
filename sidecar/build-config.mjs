@@ -30,6 +30,36 @@ export function bundledGrpcPeersPlugin(stats) {
   };
 }
 
+/** 与 src/polls.ts 里的同名常量保持一致。 */
+export const UNTITLED_POLL = "__imessage_untitled_poll__";
+
+/**
+ * Photon 送回来的投票（包括 AI 自己发起的）标题是空的，而 @spectrum-ts/imessage 缓存投票时
+ * 要求标题非空：缓存失败后，对方的投票事件全部被丢掉（真机第二轮发现）。这里在打包时让空标题
+ * 变成 UNTITLED_POLL，侧车再把真正的标题补回来（见 src/polls.ts）。
+ *
+ * 找不到要改的代码时直接让打包失败。
+ */
+export function untitledPollPlugin(stats) {
+  return {
+    name: "untitled-poll",
+    setup(build) {
+      build.onLoad({ filter: /@spectrum-ts[\\/]imessage[\\/]dist[\\/]index\.js$/ }, async (args) => {
+        const source = await readFile(args.path, "utf8");
+        const patched = source.replace(
+          /(const toCachedPoll = \(input\) => \{\s*const poll = asPoll\(\{\s*title: )input\.title,/,
+          `$1input.title || ${JSON.stringify(UNTITLED_POLL)},`,
+        );
+        if (patched === source) {
+          throw new Error(`无法修补 ${args.path} 中的 toCachedPoll，请检查 @spectrum-ts/imessage 是否改了实现`);
+        }
+        stats.pollPatched = (stats.pollPatched ?? 0) + 1;
+        return { contents: patched, loader: "js" };
+      });
+    },
+  };
+}
+
 /** 生成 esbuild 选项。 */
 export function buildOptions({ entryPoints, outfile, define = {}, banner = "", stats }) {
   return {
@@ -46,7 +76,7 @@ export function buildOptions({ entryPoints, outfile, define = {}, banner = "", s
     metafile: true,
     logLevel: "warning",
     define,
-    plugins: [bundledGrpcPeersPlugin(stats)],
+    plugins: [bundledGrpcPeersPlugin(stats), untitledPollPlugin(stats)],
     // 部分依赖是 CommonJS，打包成 ESM 后需要一个 require
     banner: {
       js: [banner, "import { createRequire as __createRequire } from 'node:module';", "const require = __createRequire(import.meta.url);"]

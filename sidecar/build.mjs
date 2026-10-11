@@ -35,6 +35,10 @@ if (stats.patched !== 1) {
   console.error(`advanced-imessage 的 gRPC 依赖检查修补次数为 ${stats.patched}，应为 1`);
   process.exit(1);
 }
+if (stats.pollPatched !== 1) {
+  console.error(`@spectrum-ts/imessage 的投票标题修补次数为 ${stats.pollPatched ?? 0}，应为 1`);
+  process.exit(1);
+}
 
 // ---- 汇总被打包进去的第三方包的许可证 ----
 const packageRoots = new Set();

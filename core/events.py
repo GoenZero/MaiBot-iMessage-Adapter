@@ -35,10 +35,12 @@ def describe_control_event(event: Dict[str, Any]) -> Optional[str]:
         target = f"{whose}「{preview}」" if preview else whose
         return wrap_event(f"对方给{target}点了{label}回应")
     if kind == "poll_vote":
-        title = _clip(event.get("poll_title")) or "（无标题）"
+        title = _clip(event.get("poll_title"))
         option = _clip(event.get("option")) or "（未知选项）"
         verb = "选了" if event.get("selected", True) else "取消了"
-        return wrap_event(f"对方在投票「{title}」里{verb}「{option}」")
+        # 不是 AI 发起的投票，Photon 不给标题
+        where = f"投票「{title}」里" if title else "投票里"
+        return wrap_event(f"对方在{where}{verb}「{option}」")
     if kind == "read":
         return wrap_event("对方已读了你发的消息")
     return None

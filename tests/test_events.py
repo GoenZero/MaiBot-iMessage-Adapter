@@ -24,6 +24,8 @@ def test_poll_and_read_notice():
     assert vote == "<imessage_event>对方在投票「吃什么」里选了「面」</imessage_event>"
     undo = describe_control_event({"type": "poll_vote", "poll_title": "吃什么", "option": "面", "selected": False})
     assert "取消了「面」" in undo
+    untitled = describe_control_event({"type": "poll_vote", "poll_title": "", "option": "面", "selected": True})
+    assert untitled == "<imessage_event>对方在投票里选了「面」</imessage_event>"
     assert describe_control_event({"type": "read"}) == "<imessage_event>对方已读了你发的消息</imessage_event>"
     assert describe_control_event({"type": "other", "content_type": "typing"}) is None
 

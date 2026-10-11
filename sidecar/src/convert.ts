@@ -8,6 +8,7 @@
  *
  * 这里只依赖消息的「形状」，不依赖 SDK 的具体类，方便用假对象做单元测试。
  */
+import { sentPollTitle, UNTITLED_POLL } from "./polls.ts";
 
 /** SDK 内容对象的最小形状。 */
 export interface ContentLike {
@@ -380,7 +381,7 @@ async function downloadVoice(content: ContentLike, options: ConvertOptions): Pro
   return undefined;
 }
 
-function controlEvent(content: ContentLike): ControlEvent {
+function controlEvent(content: ContentLike, eventId: string): ControlEvent {
   switch (content.type) {
     case "reaction": {
       const target = asMessage(content.target);
@@ -396,9 +397,12 @@ function controlEvent(content: ContentLike): ControlEvent {
     case "poll_option": {
       const poll = content.poll as { title?: unknown } | undefined;
       const option = content.option as { title?: unknown } | undefined;
+      // Photon 送来的投票没有标题（见 polls.ts）：AI 发起的投票按编号补回标题，其他的留空
+      const rawTitle = str(poll?.title);
+      const title = rawTitle && rawTitle !== UNTITLED_POLL ? rawTitle : (sentPollTitle(eventId) ?? "");
       return {
         type: "poll_vote",
-        poll_title: str(poll?.title) ?? "",
+        poll_title: title,
         option: str(option?.title) ?? str(content.title) ?? "",
         selected: content.selected !== false,
       };
@@ -420,7 +424,7 @@ export async function convertInbound(message: MessageLike, options: ConvertOptio
   if (CONTROL_TYPES.has(message.content.type)) {
     return {
       kind: "control",
-      data: { event_id: message.id, chat_id: chatId, sender_id: senderId, timestamp, event: controlEvent(message.content) },
+      data: { event_id: message.id, chat_id: chatId, sender_id: senderId, timestamp, event: controlEvent(message.content, message.id) },
     };
   }
 

@@ -255,3 +255,18 @@ test("语音：开启转文字时下载（失败会重试），未开启时只�
   assert.ok(stuck.kind === "message");
   assert.equal((stuck.data.parts[0] as { note?: string }).note, "download_failed");
 });
+
+test("投票没有标题时（Photon 实测如此），用 AI 发起时记下的标题补回", async () => {
+  const { rememberSentPoll, UNTITLED_POLL } = await import("./polls.ts");
+
+  rememberSentPoll("poll-guid-1", "周末去哪");
+  const vote = (id: string, title: string) =>
+    convertInbound(
+      msg(id, { type: "poll_option", option: { title: "海边" }, poll: { type: "poll", title, options: [] }, selected: true, title: "海边" }),
+      options(),
+    );
+  const ours = await vote("poll-guid-1:+1:opt-1:selected:1700000000000", UNTITLED_POLL);
+  assert.deepEqual(ours.kind === "control" && ours.data.event, { type: "poll_vote", poll_title: "周末去哪", option: "海边", selected: true });
+  const unknown = await vote("other-poll:+1:opt-1:selected:1", UNTITLED_POLL);
+  assert.equal(unknown.kind === "control" && (unknown.data.event as { poll_title: string }).poll_title, "");
+});
