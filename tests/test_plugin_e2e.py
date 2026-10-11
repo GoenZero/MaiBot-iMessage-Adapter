@@ -319,3 +319,26 @@ def test_markdown_flag_follows_toggle(tmp_path: Path, monkeypatch: pytest.Monkey
 
     assert run(True) == [{"type": "text", "text": "记住**这个**", "markdown": True}]
     assert run(False) == [{"type": "text", "text": "记住**这个**"}]
+
+
+def test_bot_number_is_reported_as_gateway_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    data = plugin.get_plugin_config_data()
+    data["photon"]["bot_number"] = "+1 (415) 555-0100"
+    plugin.set_plugin_config(data)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: any(p["ready"] for p in host.of("host.update_message_gateway_state")))
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    ready = [p for p in host.of("host.update_message_gateway_state") if p["ready"]]
+    assert ready[0]["account_id"] == "+14155550100"
+    assert ready[0]["platform"] == "imessage"
+
+
+def test_normalize_account() -> None:
+    assert plugin_module.normalize_account(" +86 138-0000-0000 ") == "+8613800000000"
+    assert plugin_module.normalize_account("Bot@iCloud.com") == "bot@icloud.com"
+    assert plugin_module.normalize_account("") == ""

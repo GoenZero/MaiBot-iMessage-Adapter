@@ -139,6 +139,30 @@ class PhotonServerConfig(PluginConfigBase):
             "placeholder": "PROJECT_SECRET",
         },
     )
+    bot_number: str = Field(
+        default="",
+        description="Photon 分配给你的项目的 iMessage 号码（对方发消息的那个号码），带国家代码。",
+        json_schema_extra={
+            "hint": (
+                "在 Photon 控制台 (app.photon.codes) 能看到。填写后适配器会在连接成功时把它作为机器人账号上报给 MaiBot，"
+                "不必再到「平台账号 → 备用账号」里手动添加。注意：首次填写或更改后，MaiBot 会把这个 iMessage 对话当作一个新的聊天流。"
+            ),
+            "i18n": _schema_i18n(
+                label_en="Photon number",
+                label_ja="Photon の番号",
+                label_ko="Photon 번호",
+                hint_en="The iMessage number Photon assigned to your project, with country code. Reported to MaiBot as the bot account, so no fallback account is needed.",
+                hint_ja="Photon がプロジェクトに割り当てた iMessage 番号（国番号付き）。ボットのアカウントとして MaiBot に報告されます。",
+                hint_ko="Photon이 프로젝트에 할당한 iMessage 번호(국가 코드 포함). 봇 계정으로 MaiBot에 보고됩니다.",
+                placeholder_en="+14155550100",
+                placeholder_ja="+14155550100",
+                placeholder_ko="+14155550100",
+            ),
+            "label": "Photon 号码",
+            "order": 2,
+            "placeholder": "+14155550100",
+        },
+    )
 
 
 class SidecarBridgeConfig(PluginConfigBase):

@@ -60,6 +60,17 @@ _STATE_TEXT = {
 }
 
 
+def normalize_account(raw: str) -> str:
+    """把号码里的空格、横线、括号去掉（"+1 (415) 555-0100" → "+14155550100"）；邮箱只转小写。"""
+    value = raw.strip()
+    if not value:
+        return ""
+    if "@" in value:
+        return value.lower()
+    digits = "".join(ch for ch in value if ch.isdigit())
+    return ("+" if value.startswith("+") else "") + digits
+
+
 class IMessageAdapterPlugin(MaiBotPlugin):
     """iMessage 消息网关适配器插件。"""
 
@@ -162,9 +173,20 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         }
         return node, SIDECAR_SCRIPT, env
 
+    def _bot_account(self) -> str:
+        """WebUI 填写的 Photon 号码，规范成 +国家代码数字（邮箱则转小写）。"""
+        return normalize_account(self.config.photon.bot_number)
+
     async def _on_ready_change(self, ready: bool) -> None:
         if ready:
-            await self.ctx.gateway.update_state(GATEWAY_NAME, ready=True, platform=PLATFORM, metadata={"protocol": "photon"})
+            # 带上机器人账号：MaiBot 会把它记为本平台的机器人身份，不需要再手动配置备用账号
+            await self.ctx.gateway.update_state(
+                GATEWAY_NAME,
+                ready=True,
+                platform=PLATFORM,
+                account_id=self._bot_account(),
+                metadata={"protocol": "photon"},
+            )
         else:
             await self.ctx.gateway.update_state(GATEWAY_NAME, ready=False)
 
@@ -443,6 +465,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
             if last_error:
                 lines.append(f"最近错误：{self._redact(last_error)[:200]}")
         lines.append(f"Photon 项目：{self.config.photon.project_id or '未配置'}")
+        lines.append(f"机器人号码：{self._bot_account() or '未填写（需在平台账号里配置备用账号）'}")
         lines.append("能力：")
         lines.extend(f"  {line}" for line in status_lines(self.config))
         await self.ctx.send.text("\n".join(lines), stream_id)

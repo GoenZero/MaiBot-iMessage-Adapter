@@ -54,6 +54,7 @@ MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.j
 | `[plugin]` | `enabled` | false | 是否启用适配器 |
 | `[photon]` | `project_id` | "" | Photon 项目 ID |
 | `[photon]` | `project_secret` | "" | Photon 项目密钥 |
+| `[photon]` | `bot_number` | "" | Photon 分配的 iMessage 号码，填写后自动上报为机器人账号 |
 | `[bridge]` | `max_retries` | 3 | 侧车异常退出后快速重试的次数；之后间隔逐渐拉长（最长 5 分钟）继续重试，只有认证失败才停 |
 | `[bridge]` | `retry_interval` | 3.0 | 重启间隔（秒） |
 | `[bridge]` | `max_attachment_size_mb` | 50 | 单个附件上限（MB），收发都适用 |
@@ -70,14 +71,16 @@ MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.j
 
 ### 使用（MaiBot 配置）
 
-MaiBot Core 用主配置里的 bot 平台账号识别「机器人自己」。启用插件后，必须在 MaiBot 配置文件夹下 `bot_config.toml` 的 `[bot]` 部分，给 `platforms` 加入：
+MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码，否则发不出消息。两种方式，**推荐第一种**：
 
-```toml
-[bot]
-platforms = ["imessage:+10000000000"] # "imessage:" 后面是 Photon 给你的项目分配的号码
-```
-
-也可以在 WebUI 里设置：`麦麦设置 - 基础 - 平台账号右边的加号 - 平台 imessage，账号填 +10000000000`。不设置将无法发送消息。
+1. **在本插件配置页「Photon 云端 → Photon 号码」填写 Photon 分配给你的项目的号码**（带国家代码，例如 `+14155550100`）。适配器连上 Photon 时会把它作为机器人账号上报给 MaiBot，不需要再做别的设置。
+   - 注意：首次填写或更改号码后，MaiBot 会把这个 iMessage 对话当作一个**新的聊天流**（MaiBot 的聊天流编号里含机器人账号），之前那条聊天流的近期上下文不会接上。
+2. 手动配置备用账号：在 MaiBot WebUI 的**插件配置页（适配器设置）→ 右上角「平台账号」→ 展开 → 备用账号**里添加，平台填 `imessage`，账号填 Photon 号码；或者直接编辑 `bot_config.toml`：
+   ```toml
+   [bot]
+   platforms = ["imessage:+14155550100"]
+   ```
+   这是 MaiBot 1.3.5 的位置（`bot.platforms`，界面上叫「其他备用平台 / 备用账号」）。适配器上报了账号之后，这里的备用账号就不再参与判断。
 
 初次使用必须先通过 iMessage 向 Photon 分配的号码发一条消息，否则会出现 `Target not allowed for this project`。仍报错时，到 Photon 控制台 Users 里添加号码；必要时用 debug.photon.codes 查出 Apple 实际使用的号码或邮箱再添加。
 

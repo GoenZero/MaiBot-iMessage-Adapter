@@ -17,7 +17,7 @@ def test_old_config_upgrade_keeps_credentials() -> None:
     default = plugin.build_default_config()
     rebuilt = rebuild_plugin_config_data(default, old)
     normalized, _ = plugin.normalize_plugin_config(rebuilt)
-    assert normalized["photon"] == {"project_id": "pid", "project_secret": "sec"}
+    assert normalized["photon"] == {"project_id": "pid", "project_secret": "sec", "bot_number": ""}
     assert normalized["plugin"]["enabled"] is True
     assert "ws_port" not in normalized["bridge"]
     assert "plugin_version" not in normalized["plugin"]
