@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Sequence, Tuple
 
+EVENT_NOTE = "<imessage_event> 是系统通知（点赞、投票、已读），不是对方的话，不必都回应。"
+
 REPLY_MODE_TEXT = {
     "always": "总是引用",
     "auto": "AI 自己决定",
@@ -135,6 +137,24 @@ REGISTRY: Sequence[Capability] = (
         is_enabled=lambda c: _caps(c).link_preview,
     ),
     Capability(
+        key="inbound_reactions",
+        title="告诉 AI 对方的点赞和投票",
+        photon_call="入站 reaction / poll_option",
+        plan="free",
+        kind="auto",
+        is_enabled=lambda c: _caps(c).notify_reactions,
+        ai_note=lambda c: EVENT_NOTE,
+    ),
+    Capability(
+        key="inbound_read",
+        title="告诉 AI 对方已读",
+        photon_call="入站 read",
+        plan="free",
+        kind="auto",
+        is_enabled=lambda c: _caps(c).notify_read,
+        ai_note=lambda c: EVENT_NOTE,
+    ),
+    Capability(
         key="voice_send",
         title="发语音",
         photon_call="voice()",
@@ -163,7 +183,7 @@ REGISTRY: Sequence[Capability] = (
         plan="free",
         kind="auto",
         is_enabled=lambda c: _caps(c).markdown,
-        ai_note=lambda c: "可用 **粗体**、列表等 Markdown，iMessage 会显示样式；闲聊少用。",
+        ai_note=lambda c: "可用 **粗体**、列表等 Markdown（会显示成样式），闲聊少用。",
     ),
     Capability(
         key="text_files",
@@ -182,8 +202,8 @@ REGISTRY: Sequence[Capability] = (
         kind="inbound",
         is_enabled=lambda c: True,
         ai_note=lambda c: (
-            "对方消息带 quote=\"编号\" 表示引用了那条消息。"
-            "你打不开的语音、文件等会以方括号说明出现。"
+            "对方消息带 quote=\"编号\" 表示引用了那条消息；"
+            "打不开的语音、文件会以方括号说明。"
         ),
     ),
 )
@@ -211,6 +231,8 @@ def all_tool_names() -> set[str]:
 def build_brief(config: Any) -> str:
     """生成给 AI 的短说明（目标 200 token 以内）。内容只随配置变化，便于模型侧缓存。"""
     notes = [note for cap in REGISTRY if (note := cap.ai_note(config) if cap.enabled(config) else cap.off_note)]
+    # 几项能力可能共用一句说明，只写一次
+    notes = list(dict.fromkeys(notes))
     if not notes:
         return ""
     lines = ["[iMessage 能力说明] 你正通过 iMessage 和对方一对一私聊。"]

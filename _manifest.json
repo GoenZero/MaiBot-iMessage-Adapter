@@ -45,7 +45,8 @@
   "capabilities": [
     "send.text",
     "send.hybrid",
-    "chat.get_all_streams"
+    "chat.get_all_streams",
+    "maisaka.context.append"
   ],
   "i18n": {
     "default_locale": "zh-CN",

@@ -351,6 +351,24 @@ class CapabilitiesConfig(PluginConfigBase):
             "order": 11,
         },
     )
+    notify_reactions: bool = Field(
+        default=True,
+        description="对方给消息点赞、或在投票里选了选项时，告诉 AI（AI 在下一轮能看到）。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Tell the AI about tapbacks and votes", label_ja="相手のリアクションと投票を AI に伝える", label_ko="상대의 반응과 투표를 AI에게 알림"),
+            "label": "告诉 AI 对方的点赞和投票",
+            "order": 12,
+        },
+    )
+    notify_read: bool = Field(
+        default=True,
+        description="对方读了 AI 发的消息时告诉 AI。同一批消息只提醒一次。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Tell the AI about read receipts", label_ja="既読を AI に伝える", label_ko="읽음 확인을 AI에게 알림"),
+            "label": "告诉 AI 对方已读",
+            "order": 13,
+        },
+    )
     reply_mode: Literal["auto", "always", "off"] = Field(
         default="auto",
         description="AI 的回复要不要以「引用对方某句话」的形式发出。auto：AI 自己决定；always：总是引用对方最新一句；off：从不引用。",

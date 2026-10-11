@@ -170,6 +170,7 @@ test("对方点赞、已读、投票选择是控制事件，不当成用户发�
     emoji: "❤️",
     target_id: "bot-3",
     target_text: "晚安",
+    target_from_me: true,
   });
   const read = await convertInbound(msg("r2", { type: "read", target }), options());
   assert.deepEqual(read.kind === "control" && read.data.event, { type: "read", target_id: "bot-3" });

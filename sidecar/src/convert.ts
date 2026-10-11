@@ -54,7 +54,7 @@ export interface InboundMessage {
 }
 
 export type ControlEvent =
-  | { type: "reaction"; emoji: string; target_id: string; target_text?: string }
+  | { type: "reaction"; emoji: string; target_id: string; target_text?: string; target_from_me?: boolean }
   | { type: "read"; target_id: string }
   | { type: "poll_vote"; poll_title: string; option: string; selected: boolean }
   | { type: "other"; content_type: string };
@@ -345,6 +345,8 @@ function controlEvent(content: ContentLike): ControlEvent {
       const event: ControlEvent = { type: "reaction", emoji: String(content.emoji ?? ""), target_id: target?.id ?? "" };
       const text = previewText(target?.content);
       if (text) event.target_text = text;
+      // 被点的是不是机器人自己发的消息
+      if (target?.direction) event.target_from_me = target.direction === "outbound";
       return event;
     }
     case "read":

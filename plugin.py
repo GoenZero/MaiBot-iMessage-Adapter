@@ -25,7 +25,8 @@ import time
 
 from .config import PLUGIN_VERSION, IMessageAdapterConfig
 from .core.bridge import SidecarError, SidecarSupervisor
-from .core.capabilities import all_tool_names, build_brief, disabled_tool_names, status_lines
+from .core.capabilities import all_tool_names, build_brief, capability, disabled_tool_names, status_lines
+from .core.events import describe_control_event
 from .core.inbound import build_maibot_message
 from .core.media import load_image_file
 from .core.node_runtime import resolve_node
@@ -87,6 +88,9 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         # 侧车启动时的连接相关配置，以及最近一次上报给 MaiBot 的机器人号码
         self._active_settings: Optional[Dict[str, Any]] = None
         self._reported_account: Optional[str] = None
+        # 每个对话里 AI 最近一次发消息的时间，以及最近一次告诉 AI「对方已读」的时间
+        self._last_sent_at: Dict[str, float] = {}
+        self._read_noted_at: Dict[str, float] = {}
         # 工具要用的记录（AI 发出的消息组、点过的回应）；和侧车的消息缓存同样大小
         self._init_tool_state(500)
 
@@ -281,8 +285,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         if event == "message":
             await self._handle_inbound_message(data)
         elif event == "control":
-            event_info = data.get("event") if isinstance(data.get("event"), dict) else {}
-            self.ctx.logger.info("收到 iMessage 事件：%s", event_info.get("type"))
+            self._spawn(self._handle_control_event(data))
         elif event == "fatal":
             self._last_error = f"[{data.get('code')}] {data.get('message')}"
         elif event == "link":
@@ -300,6 +303,50 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             self._last_outage = f"{started} 起中断约 {seconds} 秒，已自动恢复"
             self._link_down_since = None
             self.ctx.logger.info("与 Photon 的连接已恢复（中断约 %d 秒）", seconds)
+
+    async def _handle_control_event(self, data: Dict[str, Any]) -> None:
+        """对方点赞、投票选择、已读：以系统通知的形式写进 AI 的聊天记录（不唤醒 AI，下一轮能看到）。"""
+        event = data.get("event") if isinstance(data.get("event"), dict) else {}
+        kind = str(event.get("type", ""))
+        chat_id = str(data.get("chat_id", ""))
+        sender_id = str(data.get("sender_id", ""))
+        self.ctx.logger.info("收到 iMessage 事件：%s", kind)
+        if sender_id and chat_id:
+            self._chat_by_user[sender_id] = chat_id
+
+        if kind in ("reaction", "poll_vote"):
+            if not capability("inbound_reactions").enabled(self.config):
+                return
+        elif kind == "read":
+            # 同一批消息只提醒一次：上次提醒之后 AI 又发过消息，才再提醒
+            if not capability("inbound_read").enabled(self.config):
+                return
+            last_sent = self._last_sent_at.get(chat_id)
+            if last_sent is None or self._read_noted_at.get(chat_id, 0.0) >= last_sent:
+                return
+            self._read_noted_at[chat_id] = time.time()
+
+        text = describe_control_event(event)
+        if not text:
+            return
+        session_id = await self._sessions.session_for(sender_id, self._reported_account or "")
+        if not session_id:
+            self.ctx.logger.info("还没有和 %s 的聊天记录，事件不告诉 AI", sender_id)
+            return
+        try:
+            result = await self.ctx.maisaka.context.append(
+                session_id,
+                [{"type": "text", "data": text}],
+                visible_text=text,
+                source_kind="imessage_event",
+            )
+        except Exception as exc:  # noqa: BLE001 - 只记日志，不影响聊天
+            self.ctx.logger.warning("把 iMessage 事件写进 AI 聊天记录失败：%s", exc)
+            return
+        if isinstance(result, dict) and result.get("success") is False:
+            self.ctx.logger.warning("把 iMessage 事件写进 AI 聊天记录失败：%s", result.get("error"))
+            return
+        self.ctx.logger.info("已告诉 AI：%s", text)
 
     async def _handle_inbound_message(self, data: Dict[str, Any]) -> None:
         sender_id = str(data.get("sender_id", ""))
@@ -440,6 +487,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         if result.get("partial"):
             self.ctx.logger.warning("消息只发出了一部分：%s", message_ids)
         self._remember_sent(message_ids)
+        self._last_sent_at[chat_id] = time.time()
         return {"success": True, "external_message_id": message_ids[0] if message_ids else None}
 
     def _choose_reply_target(self, chat_id: str, requested: Optional[str]) -> Optional[str]:

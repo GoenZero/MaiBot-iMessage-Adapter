@@ -574,3 +574,48 @@ def test_background_and_contact_tools(tmp_path: Path, monkeypatch: pytest.Monkey
     assert [op["op"] for op in ops] == ["background", "background", "background", "share_contact"]
     assert ops[0]["args"] == {"chat_id": "+1", "action": "set", "message_id": "img"}
     assert ops[1]["args"] == {"chat_id": "+1", "action": "clear"}
+
+
+def test_control_events_are_told_to_the_ai(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    def control(event: dict) -> dict:
+        return {"event_id": "e", "chat_id": "any;-;+1", "sender_id": "+1", "timestamp": 0, "event": event}
+
+    async def drain() -> None:
+        while plugin._background:
+            await asyncio.sleep(0.01)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        await plugin._on_sidecar_event("control", control({"type": "reaction", "emoji": "❤️", "target_text": "晚安", "target_from_me": True}))
+        await plugin._on_sidecar_event("control", control({"type": "poll_vote", "poll_title": "吃什么", "option": "面", "selected": True}))
+        # 还没发过消息：已读不提醒
+        await plugin._on_sidecar_event("control", control({"type": "read"}))
+        await drain()
+        await plugin.send_to_imessage({"raw_message": [{"type": "text", "data": "在吗"}], "message_info": {"additional_config": {"platform_io_target_user_id": "+1"}}})
+        # 发过消息后第一次已读提醒，第二次不再提醒
+        await plugin._on_sidecar_event("control", control({"type": "read"}))
+        await drain()
+        await plugin._on_sidecar_event("control", control({"type": "read"}))
+        await drain()
+
+        # 关掉开关后不再告诉 AI
+        data = plugin.get_plugin_config_data()
+        data["capabilities"]["notify_reactions"] = False
+        plugin.set_plugin_config(data)
+        await plugin._on_sidecar_event("control", control({"type": "reaction", "emoji": "👍"}))
+        await drain()
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    appended = [p["args"] for p in host.of("cap.call") if p["capability"] == "maisaka.context.append"]
+    texts = [a["visible_text"] for a in appended]
+    assert texts == [
+        "<imessage_event>对方给你的消息「晚安」点了「爱心」回应</imessage_event>",
+        "<imessage_event>对方在投票「吃什么」里选了「面」</imessage_event>",
+        "<imessage_event>对方已读了你发的消息</imessage_event>",
+    ]
+    assert all(a["stream_id"] == "s-imessage" and a["source_kind"] == "imessage_event" for a in appended)
+    assert appended[0]["segments"] == [{"type": "text", "data": texts[0]}]
