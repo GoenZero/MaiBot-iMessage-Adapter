@@ -93,3 +93,41 @@ export function resetLinkState(): void {
 export function streamLabelOf(args: unknown[]): string {
   return streamLabel(args);
 }
+
+// ---------------------------------------------------------------------------
+// 「不支持」警告：SDK 遇到平台不支持的操作（例如撤回投票）时只记一条警告、不抛错，
+// 发后不管的操作（编辑、撤回、背景、名片）看起来就像成功了。这里记下这些警告，
+// 让动作在执行后检查一下。
+// ---------------------------------------------------------------------------
+
+interface UnsupportedNote {
+  seq: number;
+  subject: string;
+  detail: string;
+}
+
+const UNSUPPORTED_PATTERN = /does not support (?:content type|action) "([^"]+)"(?:: (.*?))?; skipping\./;
+const unsupportedNotes: UnsupportedNote[] = [];
+let unsupportedSeq = 0;
+
+/** 如果这条 SDK 日志是「不支持」警告，记下来并返回 true。 */
+export function trackUnsupported(args: unknown[]): boolean {
+  const text = args.filter((arg) => typeof arg === "string").join(" ");
+  const match = UNSUPPORTED_PATTERN.exec(text);
+  if (!match) return false;
+  unsupportedSeq += 1;
+  unsupportedNotes.push({ seq: unsupportedSeq, subject: match[1] ?? "", detail: match[2] ?? "" });
+  if (unsupportedNotes.length > 20) unsupportedNotes.shift();
+  return true;
+}
+
+/** 当前位置，执行动作前取一次。 */
+export function unsupportedMark(): number {
+  return unsupportedSeq;
+}
+
+/** 从 mark 之后有没有关于这些操作（action 名或内容类型）的「不支持」警告；有则返回原因。 */
+export function unsupportedSince(mark: number, subjects: string[]): string | undefined {
+  const note = unsupportedNotes.find((n) => n.seq > mark && subjects.includes(n.subject));
+  return note ? note.detail || `iMessage 不支持 ${note.subject}` : undefined;
+}

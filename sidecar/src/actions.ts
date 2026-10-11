@@ -14,6 +14,7 @@ import type { MessageLike } from "./convert.ts";
 import type { LruCache } from "./handles.ts";
 import { readOutboundFile } from "./media.ts";
 import { BridgeError, optionalString, requireString } from "./protocol.ts";
+import { unsupportedMark, unsupportedSince } from "./sdklog.ts";
 
 /** 可操作的消息对象（SDK Message 的最小形状）。 */
 export interface ActionMessage extends MessageLike {
@@ -242,20 +243,33 @@ export class Actions {
     return target;
   }
 
-  /** 修改自己发出的一条文字消息（iMessage 限 15 分钟内、最多 5 次，超出时由 Photon 报错）。 */
+  /**
+   * 执行一个「发后不管」的操作，并检查 SDK 有没有把它当成不支持而跳过。
+   * SDK 对不支持的操作只记警告不抛错，不检查的话会误报成功。
+   */
+  private async fireAndCheck(subjects: string[], run: () => Promise<unknown>): Promise<void> {
+    const mark = unsupportedMark();
+    await run();
+    const reason = unsupportedSince(mark, subjects);
+    if (reason) throw new BridgeError("UNSUPPORTED", reason);
+  }
+
+  /** 修改自己发出的一条文字消息（iMessage 限 15 分钟内、最多 5 次，超出时由 Photon 报错）。改后按纯文字显示。 */
   async edit(args: Record<string, unknown>): Promise<Record<string, never>> {
     const value = requireString(args, "text");
     const target = await this.findOwnMessage(args, "编辑");
-    if (!target.edit) throw new BridgeError("UNSUPPORTED", "这条消息不能编辑");
-    await target.edit(args.markdown === true ? this.deps.builders.markdown(value) : this.deps.builders.text(value));
+    const kind = target.content?.type;
+    if (!target.edit || (kind !== "text" && kind !== "markdown")) throw new BridgeError("UNSUPPORTED", "只能编辑文字消息");
+    await this.fireAndCheck(["edit"], () => target.edit!(this.deps.builders.text(value)));
     return {};
   }
 
-  /** 撤回自己发出的一条消息或一个点赞（消息限 2 分钟内，点赞不限时）。 */
+  /** 撤回自己发出的一条消息或一个点赞（消息限 2 分钟内，点赞不限时；投票不能撤回）。 */
   async unsend(args: Record<string, unknown>): Promise<Record<string, never>> {
     const target = await this.findOwnMessage(args, "撤回");
+    if (target.content?.type === "poll") throw new BridgeError("UNSUPPORTED", "iMessage 的投票不能撤回");
     if (!target.unsend) throw new BridgeError("UNSUPPORTED", "这条消息不能撤回");
-    await target.unsend();
+    await this.fireAndCheck(["unsend"], () => target.unsend!());
     this.deps.handles.delete(target.id);
     return {};
   }
@@ -265,7 +279,7 @@ export class Actions {
     const space = await this.deps.resolveSpace(requireString(args, "chat_id"));
     const action = requireString(args, "action");
     if (action === "clear") {
-      await space.send(this.deps.builders.background("clear"));
+      await this.fireAndCheck(["background"], () => space.send(this.deps.builders.background("clear")));
       return {};
     }
     if (action !== "set") throw new BridgeError("BAD_REQUEST", "action 只能是 set 或 clear");
@@ -276,14 +290,14 @@ export class Actions {
     if (!image) throw new BridgeError("NO_IMAGE", "这条消息里没有图片");
     const data = await image.read();
     if (data.length > this.deps.maxAttachmentBytes) throw new BridgeError("TOO_LARGE", "图片太大");
-    await space.send(this.deps.builders.background(data, image.mimeType));
+    await this.fireAndCheck(["background"], () => space.send(this.deps.builders.background(data, image.mimeType)));
     return {};
   }
 
   /** 把机器人账号自己的名字和头像分享给对方（Apple 的「共享名字与照片」）。 */
   async shareContact(args: Record<string, unknown>): Promise<Record<string, never>> {
     const space = await this.deps.resolveSpace(requireString(args, "chat_id"));
-    await space.send(this.deps.builders.contactCard());
+    await this.fireAndCheck(["contactCard"], () => space.send(this.deps.builders.contactCard()));
     return {};
   }
 

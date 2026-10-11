@@ -44,6 +44,8 @@ PLATFORM = "imessage"
 SIDECAR_SCRIPT = Path(__file__).resolve().parent / "sidecar" / "dist" / "sidecar.mjs"
 # 侧车发一条消息的最长等待（MaiBot 给网关的上限是 60 秒）
 SEND_TIMEOUT = 45.0
+# 语音识别的最长等待：收消息是逐条排队处理的，识别太慢会卡住后面的消息
+TRANSCRIBE_TIMEOUT = 30.0
 _STATE_TEXT = {
     "stopped": "⏹ 未运行",
     "starting": "⏳ 正在启动",
@@ -88,7 +90,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         # 侧车启动时的连接相关配置，以及最近一次上报给 MaiBot 的机器人号码
         self._active_settings: Optional[Dict[str, Any]] = None
         self._reported_account: Optional[str] = None
-        # 每个对话里 AI 最近一次发消息的时间，以及最近一次告诉 AI「对方已读」的时间
+        # 按对方号码记：AI 最近一次发消息的时间，以及最近一次告诉 AI「对方已读」的时间
         self._last_sent_at: Dict[str, float] = {}
         self._read_noted_at: Dict[str, float] = {}
         # 工具要用的记录（AI 发出的消息组、点过的回应）；和侧车的消息缓存同样大小
@@ -325,8 +327,8 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             if not self.config.voice.transcribe:
                 continue
             try:
-                result = await self.ctx.llm.transcribe_audio(audio)
-            except Exception as exc:  # noqa: BLE001 - 识别失败不影响聊天
+                result = await asyncio.wait_for(self.ctx.llm.transcribe_audio(audio), timeout=TRANSCRIBE_TIMEOUT)
+            except Exception as exc:  # noqa: BLE001 - 识别失败（含超时）不影响聊天
                 self.ctx.logger.warning("语音转文字失败：%s", exc)
                 part["note"] = "transcribe_failed"
                 continue
@@ -349,39 +351,48 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         if sender_id and chat_id:
             self._chat_by_user[sender_id] = chat_id
 
+        previous_note: Optional[float] = None
         if kind in ("reaction", "poll_vote"):
             if not capability("inbound_reactions").enabled(self.config):
                 return
         elif kind == "read":
-            # 同一批消息只提醒一次：上次提醒之后 AI 又发过消息，才再提醒
+            # 同一批消息只提醒一次：上次提醒之后 AI 又发过消息，才再提醒。按对方号码记
             if not capability("inbound_read").enabled(self.config):
                 return
-            last_sent = self._last_sent_at.get(chat_id)
-            if last_sent is None or self._read_noted_at.get(chat_id, 0.0) >= last_sent:
+            last_sent = self._last_sent_at.get(sender_id)
+            previous_note = self._read_noted_at.get(sender_id, 0.0)
+            if last_sent is None or previous_note >= last_sent:
                 return
-            self._read_noted_at[chat_id] = time.time()
+            # 先占上，避免几条已读同时到达时重复提醒；没告诉成 AI 时再退回去
+            self._read_noted_at[sender_id] = time.time()
 
         text = describe_control_event(event)
-        if not text:
+        if text and await self._tell_ai(sender_id, text):
             return
-        session_id = await self._sessions.session_for(sender_id, self._reported_account or "")
-        if not session_id:
-            self.ctx.logger.info("还没有和 %s 的聊天记录，事件不告诉 AI", sender_id)
-            return
+        if previous_note is not None:
+            self._read_noted_at[sender_id] = previous_note
+
+    async def _tell_ai(self, sender_id: str, text: str) -> bool:
+        """把一条系统通知写进和这个人的聊天记录。成功返回 True；失败只记日志。"""
         try:
+            session_id = await self._sessions.session_for(sender_id, self._reported_account or "")
+            if not session_id:
+                self.ctx.logger.info("还没有和 %s 的聊天记录，事件不告诉 AI", sender_id)
+                return False
             result = await self.ctx.maisaka.context.append(
                 session_id,
                 [{"type": "text", "data": text}],
                 visible_text=text,
                 source_kind="imessage_event",
             )
-        except Exception as exc:  # noqa: BLE001 - 只记日志，不影响聊天
+        except Exception as exc:  # noqa: BLE001 - 查找聊天流或写入失败都只记日志，不影响聊天
             self.ctx.logger.warning("把 iMessage 事件写进 AI 聊天记录失败：%s", exc)
-            return
+            return False
         if isinstance(result, dict) and result.get("success") is False:
             self.ctx.logger.warning("把 iMessage 事件写进 AI 聊天记录失败：%s", result.get("error"))
-            return
+            return False
         self.ctx.logger.info("已告诉 AI：%s", text)
+        return True
 
     async def _handle_inbound_message(self, data: Dict[str, Any]) -> None:
         sender_id = str(data.get("sender_id", ""))
@@ -523,7 +534,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         if result.get("partial"):
             self.ctx.logger.warning("消息只发出了一部分：%s", message_ids)
         self._remember_sent(message_ids)
-        self._last_sent_at[chat_id] = time.time()
+        self._last_sent_at[target] = time.time()
         return {"success": True, "external_message_id": message_ids[0] if message_ids else None}
 
     def _choose_reply_target(self, chat_id: str, requested: Optional[str]) -> Optional[str]:

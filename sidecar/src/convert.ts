@@ -85,6 +85,8 @@ export interface ConvertOptions {
   saveVoice?: SaveImage;
   /** 语音下载失败后的重试间隔（毫秒），测试时可设为 0。 */
   voiceRetryDelayMs?: number;
+  /** 每次下载语音的最长等待（毫秒）。下载期间后面的消息都要排队，所以要有上限。 */
+  voiceTimeoutMs?: number;
   /** 记录警告日志（下载失败等），不影响转换结果。 */
   warn: (message: string) => void;
 }
@@ -349,15 +351,25 @@ async function convertContent(
 
 const VOICE_ATTEMPTS = 3;
 
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`超过 ${ms / 1000} 秒`)), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
 /**
- * 下载语音。刚收到时附件可能还在从 Apple 传到服务器，下载会失败：等一会再试，最多 3 次。
- * 都失败返回 undefined（调用方会让 AI 得体地告诉对方暂时听不了）。
+ * 下载语音。刚收到时附件可能还在从 Apple 传到服务器，下载会失败：等一会再试，最多 3 次，
+ * 每次最多等 15 秒（下载期间后面的消息要排队）。都失败返回 undefined（调用方会让 AI 得体地
+ * 告诉对方没听清）。超时放弃的那次如果之后才下载完，临时文件会在插件下次启动时清掉。
  */
 async function downloadVoice(content: ContentLike, options: ConvertOptions): Promise<string | undefined> {
-  const delay = options.voiceRetryDelayMs ?? 3000;
+  const delay = options.voiceRetryDelayMs ?? 2000;
+  const limit = options.voiceTimeoutMs ?? 15_000;
   for (let attempt = 1; attempt <= VOICE_ATTEMPTS; attempt++) {
     try {
-      return (await options.saveVoice!(content)).path;
+      return (await withTimeout(options.saveVoice!(content), limit)).path;
     } catch (error) {
       const code = (error as { code?: unknown }).code;
       options.warn(`语音下载失败（第 ${attempt} 次）：${String((error as Error).message ?? error)}`);

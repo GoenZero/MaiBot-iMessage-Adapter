@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import { type ActionMessage, Actions, type Builders, findImage, type SpaceLike } from "./actions.ts";
 import { LruCache } from "./handles.ts";
+import { trackUnsupported } from "./sdklog.ts";
 
 const builders: Builders = {
   text: (value) => ({ kind: "text", value }),
@@ -148,8 +149,9 @@ test("编辑与撤回：只能操作自己发出的消息，找不到时明确�
   handles.set("in-1", { id: "in-1", content: { type: "text", text: "对方的话" }, direction: "inbound", edit: async () => {}, unsend: async () => {} });
 
   await actions.edit({ chat_id: "+1", message_id: "out-1", text: "改好了" });
+  // iMessage 只能把消息改成纯文字
   await actions.edit({ chat_id: "+1", message_id: "out-1", text: "**改好了**", markdown: true });
-  assert.deepEqual(edits, [{ kind: "text", value: "改好了" }, { kind: "markdown", value: "**改好了**" }]);
+  assert.deepEqual(edits, [{ kind: "text", value: "改好了" }, { kind: "text", value: "**改好了**" }]);
 
   await assert.rejects(actions.edit({ chat_id: "+1", message_id: "in-1", text: "x" }), { code: "NOT_OWN_MESSAGE" });
   await assert.rejects(actions.unsend({ chat_id: "+1", message_id: "in-1" }), { code: "NOT_OWN_MESSAGE" });
@@ -198,4 +200,23 @@ test("聊天背景：用对话里的图片设置，或清除；分享名片", as
   await assert.rejects(actions.background({ chat_id: "+1", action: "set", message_id: "nope" }), { code: "MESSAGE_NOT_FOUND" });
   await assert.rejects(actions.background({ chat_id: "+1", action: "paint" }), { code: "BAD_REQUEST" });
   assert.equal(findImage({ type: "attachment", mimeType: "application/pdf", read: async () => Buffer.alloc(0) }), undefined);
+});
+
+test("SDK 把操作当成不支持而跳过时，报失败而不是假装成功", async () => {
+  const { actions, handles } = setup(() => undefined);
+  const skip = (subject: string, detail: string) =>
+    trackUnsupported(["[spectrum.platform]", "WARN", `imessage does not support action "${subject}": ${detail}; skipping.`, {}]);
+  handles.set("out-1", { ...sentMessage("out-1"), unsend: async () => void skip("unsend", "too late") });
+  await assert.rejects(actions.unsend({ chat_id: "+1", message_id: "out-1" }), { code: "UNSUPPORTED", message: "too late" });
+  assert.ok(handles.get("out-1")); // 没撤成，缓存保留
+
+  // 投票不能撤回；非文字消息不能编辑：不调用 SDK 直接拒绝
+  handles.set("poll-1", { id: "poll-1", direction: "outbound", content: { type: "poll", title: "t", options: [] }, unsend: async () => assert.fail() });
+  await assert.rejects(actions.unsend({ chat_id: "+1", message_id: "poll-1" }), { code: "UNSUPPORTED" });
+  handles.set("img-1", { id: "img-1", direction: "outbound", content: { type: "attachment" }, edit: async () => assert.fail() });
+  await assert.rejects(actions.edit({ chat_id: "+1", message_id: "img-1", text: "x" }), { code: "UNSUPPORTED" });
+
+  // 别的操作的警告不影响这次
+  handles.set("out-2", { ...sentMessage("out-2"), unsend: async () => void skip("background", "x") });
+  await actions.unsend({ chat_id: "+1", message_id: "out-2" });
 });

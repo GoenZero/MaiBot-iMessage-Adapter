@@ -8,7 +8,7 @@
  * SDK 的日志（@photon-ai/otel，经 console.* 输出）会被整理成一行一条，去掉大段堆栈；
  * 其中「消息流中断 / 恢复」两种日志会转成 link 事件，让插件知道与 Photon 的连接状态。
  */
-import { streamLabelOf, summarizeArgs, trackLinkState } from "./sdklog.ts";
+import { streamLabelOf, summarizeArgs, trackLinkState, trackUnsupported } from "./sdklog.ts";
 
 const rawStdoutWrite = process.stdout.write.bind(process.stdout);
 const stderrWrite = process.stderr.write.bind(process.stderr);
@@ -66,6 +66,7 @@ export function emitLink(data: object): void {
 
 function sdkConsole(level: LogLevel) {
   return (...args: unknown[]): void => {
+    trackUnsupported(args);
     const kind = trackLinkState(args, emitLink);
     // 断网期间 SDK 每次重试都会打一条，只记第一条；恢复时记一条
     if (kind === "repeat") return;

@@ -246,4 +246,12 @@ test("语音：开启转文字时下载（失败会重试），未开启时只�
   assert.ok(broken.kind === "message");
   assert.deepEqual(broken.data.parts[0], { type: "voice", id: "v1", mime: "audio/x-caf", duration: 4, note: "download_failed" });
   assert.equal(warnings.length, 3);
+
+  // 下载卡住不动：每次最多等 voiceTimeoutMs，然后放弃
+  const stuck = await convertInbound(
+    msg("v-stuck", voice),
+    options({ voiceRetryDelayMs: 0, voiceTimeoutMs: 20, saveVoice: () => new Promise(() => undefined) }),
+  );
+  assert.ok(stuck.kind === "message");
+  assert.equal((stuck.data.parts[0] as { note?: string }).note, "download_failed");
 });

@@ -269,7 +269,7 @@ def test_edit_and_unsend_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     asyncio.run(main())
     ops = sidecar_ops(tmp_path)
     edit = next(op for op in ops if op["op"] == "edit")
-    assert edit["args"]["markdown"] is True
+    assert "markdown" not in edit["args"]  # iMessage 只能改成纯文字
     unsends = [op["args"]["message_id"] for op in ops if op["op"] == "unsend" and op["args"]["message_id"] != "late"]
     # 两部分都撤回，后发的先撤
     assert unsends[0].endswith("-1") and unsends[1] == unsends[0][:-2]
@@ -601,6 +601,20 @@ def test_control_events_are_told_to_the_ai(tmp_path: Path, monkeypatch: pytest.M
         await plugin._on_sidecar_event("control", control({"type": "read"}))
         await drain()
 
+        # 查找聊天流出错时不抛异常，这批已读也不算提醒过
+        original = plugin._sessions.session_for
+
+        async def broken(*args: Any) -> None:
+            raise RuntimeError("host 不可用")
+
+        plugin._sessions.session_for = broken
+        await plugin.send_to_imessage({"raw_message": [{"type": "text", "data": "还在吗"}], "message_info": {"additional_config": {"platform_io_target_user_id": "+1"}}})
+        await plugin._on_sidecar_event("control", control({"type": "read"}))
+        await drain()
+        plugin._sessions.session_for = original
+        await plugin._on_sidecar_event("control", control({"type": "read"}))
+        await drain()
+
         # 关掉开关后不再告诉 AI
         data = plugin.get_plugin_config_data()
         data["capabilities"]["notify_reactions"] = False
@@ -616,6 +630,7 @@ def test_control_events_are_told_to_the_ai(tmp_path: Path, monkeypatch: pytest.M
         "<imessage_event>对方给你的消息「晚安」点了「爱心」回应</imessage_event>",
         "<imessage_event>对方在投票「吃什么」里选了「面」</imessage_event>",
         "<imessage_event>对方已读了你发的消息</imessage_event>",
+        "<imessage_event>对方已读了你发的消息</imessage_event>",  # 上一次没告诉成，重试时补上
     ]
     assert all(a["stream_id"] == "s-imessage" and a["source_kind"] == "imessage_event" for a in appended)
     assert appended[0]["segments"] == [{"type": "text", "data": texts[0]}]

@@ -20,13 +20,13 @@ import re
 from .core.bridge import SidecarError
 from .core.capabilities import capability
 from .core.lru import LruDict
-from .core.outbound import looks_like_markdown
 
 if TYPE_CHECKING:
     from .config import IMessageAdapterConfig
     from .core.bridge import SidecarSupervisor
 
 ACTION_TIMEOUT = 20.0
+BACKGROUND_TIMEOUT = 60.0
 
 TAPBACK_NAMES = {"love": "爱心", "like": "赞", "dislike": "踩", "laugh": "哈哈", "emphasize": "感叹号", "question": "问号"}
 
@@ -40,7 +40,7 @@ REACT_DESCRIPTION = (
 EDIT_DESCRIPTION = (
     "修改你自己发出的一条 iMessage 消息的文字。对方会看到那条消息变成新内容，旁边标着「已编辑」。"
     "只在你刚才说错了、打错字、需要更正时用；不要用它代替正常回复，也不要改对方的消息。"
-    "只能改你自己 15 分钟内发的文字消息，每条最多改 5 次。"
+    "只能改你自己 15 分钟内发的文字消息，每条最多改 5 次；改后按纯文字显示，不支持 Markdown。"
 )
 UNSEND_DESCRIPTION = (
     "撤回你自己发出的一条 iMessage 消息，对方那边这条消息会消失（显示「撤回了一条消息」）。"
@@ -141,9 +141,9 @@ class IMessageToolsMixin:
             return None, {"success": False, "error": f"当前不是 iMessage 聊天，不能使用「{cap.title}」"}
         return chat_id, None
 
-    async def _sidecar_call(self, op: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _sidecar_call(self, op: str, args: Dict[str, Any], timeout: float = ACTION_TIMEOUT) -> Dict[str, Any]:
         assert self._supervisor is not None
-        return await self._supervisor.request(op, args, timeout=ACTION_TIMEOUT)
+        return await self._supervisor.request(op, args, timeout=timeout)
 
     def _tool_failure(self, verb: str, exc: SidecarError) -> Dict[str, Any]:
         """把侧车错误换成 AI 能看懂的一句话。verb 是动作名，例如「点」「改」「撤回」。"""
@@ -223,8 +223,6 @@ class IMessageToolsMixin:
         if not text.strip():
             return {"success": False, "error": "新内容不能为空；想删掉整条消息请用 imessage_unsend"}
         args: Dict[str, Any] = {"chat_id": chat_id, "message_id": msg_id, "text": text}
-        if self.config.capabilities.markdown and looks_like_markdown(text):
-            args["markdown"] = True
         try:
             await self._sidecar_call("edit", args)
         except SidecarError as exc:
@@ -380,7 +378,8 @@ class IMessageToolsMixin:
         if action == "set":
             args["message_id"] = msg_id
         try:
-            await self._sidecar_call("background", args)
+            # 要先从 Photon 下载图片再上传，大图可能超过 20 秒
+            await self._sidecar_call("background", args, timeout=BACKGROUND_TIMEOUT)
         except SidecarError as exc:
             if exc.code == "NO_IMAGE":
                 return {"success": False, "error": "这条消息里没有图片，换一条带图片的消息"}
