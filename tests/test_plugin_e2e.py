@@ -670,9 +670,7 @@ def test_voice_is_transcribed_or_politely_declined(tmp_path: Path, monkeypatch: 
 
     asyncio.run(main())
     routed = [p["message"]["raw_message"][0]["data"] for p in host.of("host.route_message")]
-    assert routed[0] == "[对方发来一条语音消息（约 3 秒），转成文字是：明天几点见]"
-    assert "没能转成文字" in routed[1] and "请对方打字" in routed[1]
-    assert "你现在听不了语音" in routed[2]
+    assert routed == ["[语音消息（约 3 秒）] 明天几点见", "[语音消息（约 3 秒），未能识别]", "[语音消息（约 3 秒）]"]
     asr = [p["args"] for p in host.of("cap.call") if p["capability"] == "llm.transcribe_audio"]
     assert len(asr) == 2 and asr[0]["audio_base64"] == base64.b64encode(b"caf-bytes").decode()
     assert not list(tmp_path.glob("*.caf"))  # 临时文件用完即删

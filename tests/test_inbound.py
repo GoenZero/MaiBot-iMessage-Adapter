@@ -42,7 +42,7 @@ def test_text_with_two_images_keeps_everything():
 
 def test_unreadable_image_becomes_readable_text():
     message = build_maibot_message(make([{"type": "image", "path": "/tmp/x", "mime": "image/heic"}]), loader_fail)
-    assert message["raw_message"] == [{"type": "text", "data": "[对方发来一张图片，但没能读取：坏文件]"}]
+    assert message["raw_message"] == [{"type": "text", "data": "[图片（没能读取：坏文件）]"}]
 
 
 def test_reply_segment_goes_first():
@@ -71,20 +71,22 @@ def test_non_image_parts_become_sentences():
     assert len(message["raw_message"]) == 1  # 相邻文字合并
     text = message["raw_message"][0]["data"]
     for expected in (
-        "[对方发来一张联系人名片] 姓名：张三；电话：+86 138；邮箱：z@x.com；单位：某公司",
-        "[对方发来一条语音消息（约 4 秒）。你现在听不了语音：请简短、自然地告诉对方你暂时听不了语音，请对方打字]",
-        "[对方发来一个文件：合同.pdf（application/pdf，2.0MB），你暂时打不开这类文件]",
-        "文件太大，没有接收",
+        "[联系人名片] 姓名：张三；电话：+86 138；邮箱：z@x.com；单位：某公司",
+        "[语音消息（约 4 秒）]",
+        "[文件：合同.pdf（application/pdf，2.0MB）]",
+        "太大，没有接收",
         "[链接] https://example.com",
-        "[对方发起了一个投票] 吃什么：面 / 饭",
-        "[对方发了一条暂不支持的内容：something-new]",
+        "[投票] 吃什么：面 / 饭",
+        "[暂不支持的内容：something-new]",
     ):
         assert expected in text
+    # 标签会作为用户的发言存进 MaiBot 的记忆，不能有旁白或给 AI 的指令
+    assert "对方" not in text and "你" not in text and "请" not in text
 
 
 def test_never_empty():
     message = build_maibot_message(make([]), loader_ok)
-    assert message["raw_message"] == [{"type": "text", "data": "[对方发了一条空白消息]"}]
+    assert message["raw_message"] == [{"type": "text", "data": "[空白消息]"}]
 
 
 def test_text_file_content_goes_to_ai(tmp_path):
@@ -101,8 +103,8 @@ def test_text_file_content_goes_to_ai(tmp_path):
         {"type": "file", "mime": "text/plain", "name": "超大.log", "size": 900000, "note": "text_too_large"},
     ]
     text = build_maibot_message(make(parts), loader_ok)["raw_message"][0]["data"]
-    assert "[对方发来一个文件：清单.md，内容如下]\n# 购物清单\n- 牛奶\n- 面包\n[文件内容结束]" in text
+    assert "[文件：清单.md，内容如下]\n# 购物清单\n- 牛奶\n- 面包\n[文件内容结束]" in text
     assert "中文编码测试" in text
     assert "只显示了前 6000 个字" in text
-    assert "超大.log" in text and "文件太大，没有读取内容" in text
+    assert "超大.log" in text and "太大，没有读取内容" in text
     assert not md.exists() and not gbk.exists() and not big.exists()  # 临时文件读完即删

@@ -1,7 +1,11 @@
 """入站：把侧车送来的消息转换成 MaiBot 的消息字典。
 
 规则：每个片段都要变成 MaiBot 能看懂的东西。图片交给识图；MaiBot 处理不了的
-（文件、语音、名片、链接、卡片……）变成一句可读的说明，绝不悄悄丢掉。
+（文件、语音、名片、链接、卡片……）变成一个可读的方括号标签，绝不悄悄丢掉。
+
+标签会和用户的话一起存进 MaiBot 的数据库，被记忆、表达学习等模块当成用户的发言读取，
+所以只写中性的描述（像 MaiBot 自己的「[图片]」「[语音消息]」），不写「对方发来……」
+这类旁白，更不写给 AI 的指令。该怎么应对写在能力说明里（core/capabilities.py），那里不入库。
 """
 
 from __future__ import annotations
@@ -68,9 +72,9 @@ def describe_text_file(part: Dict[str, Any]) -> str:
     content, truncated = read_text_file(str(part.get("path", "")))
     name = part.get("name") or "未命名"
     if content is None:
-        return f"[对方发来一个文件：{name}，但没能读取内容]"
+        return f"[文件：{name}（没能读取内容）]"
     tail = f"\n[文件较长，只显示了前 {MAX_TEXT_FILE_CHARS} 个字]" if truncated else ""
-    return f"[对方发来一个文件：{name}，内容如下]\n{content.strip()}{tail}\n[文件内容结束]"
+    return f"[文件：{name}，内容如下]\n{content.strip()}{tail}\n[文件内容结束]"
 
 
 def describe_part(part: Dict[str, Any]) -> str:
@@ -78,17 +82,15 @@ def describe_part(part: Dict[str, Any]) -> str:
     kind = part.get("type")
     if kind == "file":
         details = "，".join(x for x in (str(part.get("mime") or ""), _human_size(part.get("size"))) if x)
-        text = f"[对方发来一个文件：{part.get('name') or '未命名'}"
+        text = f"[文件：{part.get('name') or '未命名'}"
         text += f"（{details}）" if details else ""
         note = part.get("note")
         if note == "text_too_large":
-            text += "，文件太大，没有读取内容"
+            text += "，太大，没有读取内容"
         elif note == "too_large":
-            text += "，文件太大，没有接收"
+            text += "，太大，没有接收"
         elif note == "download_failed":
-            text += "，下载失败，没能打开"
-        else:
-            text += "，你暂时打不开这类文件"
+            text += "，下载失败"
         return text + "]"
     if kind == "text_file":
         return describe_text_file(part)
@@ -97,10 +99,10 @@ def describe_part(part: Dict[str, Any]) -> str:
         length = f"（约 {round(duration)} 秒）" if isinstance(duration, (int, float)) and duration > 0 else ""
         transcript = str(part.get("transcript") or "").strip()
         if transcript:
-            return f"[对方发来一条语音消息{length}，转成文字是：{transcript}]"
+            return f"[语音消息{length}] {transcript}"
         if part.get("note") in ("download_failed", "transcribe_failed"):
-            return f"[对方发来一条语音消息{length}，但没能转成文字。请简短、自然地告诉对方你没听清这条语音，请对方打字]"
-        return f"[对方发来一条语音消息{length}。你现在听不了语音：请简短、自然地告诉对方你暂时听不了语音，请对方打字]"
+            return f"[语音消息{length}，未能识别]"
+        return f"[语音消息{length}]"
     if kind == "contact":
         fields = []
         if part.get("name"):
@@ -113,21 +115,21 @@ def describe_part(part: Dict[str, Any]) -> str:
             fields.append(f"单位：{part['org']}")
         if part.get("urls"):
             fields.append("网址：" + "、".join(part["urls"]))
-        return "[对方发来一张联系人名片] " + ("；".join(fields) if fields else "（名片里没有可读信息）")
+        return "[联系人名片] " + ("；".join(fields) if fields else "（名片里没有可读信息）")
     if kind == "link":
         return f"[链接] {part.get('url', '')}"
     if kind == "app":
         detail = " ".join(x for x in (str(part.get("caption") or ""), str(part.get("url") or "")) if x)
-        return f"[对方发来一张应用卡片] {detail}".rstrip()
+        return f"[应用卡片] {detail}".rstrip()
     if kind == "poll":
         options = " / ".join(part.get("options") or [])
-        return f"[对方发起了一个投票] {part.get('title', '')}：{options}".rstrip("：")
+        return f"[投票] {part.get('title', '')}：{options}".rstrip("：")
     if kind == "effect":
         effect = str(part.get("effect", ""))
-        return f"（这条消息带有「{EFFECT_NAMES.get(effect, effect)}」特效）"
+        return f"[{EFFECT_NAMES.get(effect, effect)}特效]"
     if kind == "unsupported":
-        return f"[对方发了一条暂不支持的内容：{part.get('what') or '未知'}]"
-    return f"[对方发了一条暂不支持的内容：{kind}]"
+        return f"[暂不支持的内容：{part.get('what') or '未知'}]"
+    return f"[暂不支持的内容：{kind}]"
 
 
 def build_raw_message(parts: List[Dict[str, Any]], load_image: ImageLoader) -> Tuple[List[Dict[str, Any]], bool]:
@@ -154,12 +156,12 @@ def build_raw_message(parts: List[Dict[str, Any]], load_image: ImageLoader) -> T
                 segments.append({"type": "image", "data": "", "binary_data_base64": data, "hash": ""})
                 has_image = True
             else:
-                add_text(f"[对方发来一张图片，但没能读取：{reason}]")
+                add_text(f"[图片（没能读取：{reason}）]")
         else:
             add_text(describe_part(part))
 
     if not segments:
-        segments.append({"type": "text", "data": "[对方发了一条空白消息]"})
+        segments.append({"type": "text", "data": "[空白消息]"})
     return segments, has_image
 
 

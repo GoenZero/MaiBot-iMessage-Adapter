@@ -17,6 +17,14 @@ def config_with(**caps):
     return plugin.config
 
 
+def config_with_voice(transcribe):
+    plugin = plugin_module.create_plugin()
+    data = plugin.build_default_config()
+    data["voice"]["transcribe"] = transcribe
+    plugin.set_plugin_config(data)
+    return plugin.config
+
+
 def reply_tool():
     return {
         "type": "function",
@@ -64,6 +72,9 @@ def test_default_everything_on():
     assert "⏹ 语音转文字（关闭：收到语音时请对方改发文字）" in lines
     brief = build_brief(config)
     assert "set_quote" in brief and "quote=" in brief and "Markdown" in brief
+    # 语音转文字默认关闭：怎么应对写在能力说明里，不写进消息
+    assert "你听不了语音" in brief
+    assert "未能识别" in build_brief(config_with_voice(True))
 
 
 def test_disabled_capabilities_vanish_from_brief_and_tools():

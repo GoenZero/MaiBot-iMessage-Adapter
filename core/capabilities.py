@@ -171,6 +171,9 @@ REGISTRY: Sequence[Capability] = (
         kind="auto",
         is_enabled=lambda c: c.voice.transcribe,
         status_hint="关闭：收到语音时请对方改发文字",
+        # 给 AI 的应对方法写在这里（能力说明不入库），不写进消息里的「[语音消息]」标签
+        ai_note=lambda c: "语音会转成文字；标着「未能识别」时，简短请对方打字。",
+        off_note="你听不了语音：收到 [语音消息] 时，简短请对方打字。",
     ),
     Capability(
         key="voice_send",
@@ -210,7 +213,7 @@ REGISTRY: Sequence[Capability] = (
         plan="free",
         kind="auto",
         is_enabled=lambda c: _caps(c).read_text_files,
-        ai_note=lambda c: "对方发的 .txt、.md 等文本文件会附上内容。",
+        ai_note=lambda c: "对方发的文本文件会附上内容。",
     ),
     Capability(
         key="inbound_media",
@@ -220,8 +223,7 @@ REGISTRY: Sequence[Capability] = (
         kind="inbound",
         is_enabled=lambda c: True,
         ai_note=lambda c: (
-            "对方消息带 quote=\"编号\" 表示引用了那条消息；"
-            "打不开的语音、文件会以方括号说明。"
+            "对方消息带 quote=\"编号\" 表示引用了那条消息。"
         ),
     ),
 )
