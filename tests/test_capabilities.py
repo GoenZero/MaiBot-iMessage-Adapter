@@ -58,9 +58,10 @@ def test_default_everything_on():
     config = config_with()
     assert disabled_tool_names(config) == set()
     lines = status_lines(config)
-    assert all(line.startswith("✅") for line in lines if "发语音" not in line)
-    # 发语音只做了预留：默认配置下也显示未开启，并说明原因
+    assert all(line.startswith("✅") for line in lines if "语音" not in line)
+    # 发语音只做了预留；语音转文字要先在 MaiBot 配好识别模型，默认关闭。两项都说明原因
     assert "⏹ 发语音（预留，尚未接入语音合成服务）" in lines
+    assert "⏹ 语音转文字（关闭：收到语音时请对方改发文字）" in lines
     brief = build_brief(config)
     assert "set_quote" in brief and "quote=" in brief and "Markdown" in brief
 

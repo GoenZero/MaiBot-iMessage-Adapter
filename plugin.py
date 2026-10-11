@@ -136,6 +136,8 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             "bridge": config.get("bridge"),
             # 读取文本文件由侧车决定是否下载
             "read_text_files": capabilities.get("read_text_files"),
+            # 语音转文字开启时，侧车才下载语音
+            "transcribe_voice": self.config.voice.transcribe,
         }
 
     """═══════════════════════════════════════════════
@@ -200,6 +202,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             "MAX_ATTACHMENT_BYTES": str(self.config.bridge.max_attachment_size_mb * 1024 * 1024),
             "HANDLE_CACHE_SIZE": str(self.config.bridge.handle_cache_size),
             "READ_TEXT_FILES": "1" if self.config.capabilities.read_text_files else "0",
+            "TRANSCRIBE_VOICE": "1" if self.config.voice.transcribe else "0",
         }
         return node, SIDECAR_SCRIPT, env
 
@@ -304,6 +307,38 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             self._link_down_since = None
             self.ctx.logger.info("与 Photon 的连接已恢复（中断约 %d 秒）", seconds)
 
+    async def _transcribe_voice_parts(self, data: Dict[str, Any]) -> None:
+        """侧车下载好的语音：交给 MaiBot 的语音识别转成文字。失败只记日志，AI 会得体地告诉对方没听清。"""
+        parts = data.get("parts") if isinstance(data.get("parts"), list) else []
+        for part in parts:
+            if not isinstance(part, dict) or part.get("type") != "voice" or not part.get("path"):
+                continue
+            path = Path(str(part.pop("path")))
+            try:
+                audio = await asyncio.to_thread(path.read_bytes)
+            except OSError as exc:
+                self.ctx.logger.warning("读取语音临时文件失败：%s", exc)
+                part["note"] = "download_failed"
+                continue
+            finally:
+                path.unlink(missing_ok=True)
+            if not self.config.voice.transcribe:
+                continue
+            try:
+                result = await self.ctx.llm.transcribe_audio(audio)
+            except Exception as exc:  # noqa: BLE001 - 识别失败不影响聊天
+                self.ctx.logger.warning("语音转文字失败：%s", exc)
+                part["note"] = "transcribe_failed"
+                continue
+            text = str(result.get("text") or "").strip() if isinstance(result, dict) else ""
+            if isinstance(result, dict) and result.get("success") and text:
+                part["transcript"] = text
+                self.ctx.logger.info("语音已转成文字（%d 字）", len(text))
+            else:
+                error = result.get("error") if isinstance(result, dict) else result
+                self.ctx.logger.warning("语音转文字没有结果：%s（请检查 MaiBot 的语音识别模型配置）", error or "识别结果为空")
+                part["note"] = "transcribe_failed"
+
     async def _handle_control_event(self, data: Dict[str, Any]) -> None:
         """对方点赞、投票选择、已读：以系统通知的形式写进 AI 的聊天记录（不唤醒 AI，下一轮能看到）。"""
         event = data.get("event") if isinstance(data.get("event"), dict) else {}
@@ -354,6 +389,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         if sender_id and chat_id:
             self._chat_by_user[sender_id] = chat_id
 
+        await self._transcribe_voice_parts(data)
         loader = functools.partial(load_image_file, max_edge=max(0, self.config.media.image_max_edge))
         message = await asyncio.to_thread(build_maibot_message, data, loader)
         message_id = str(data.get("message_id", ""))

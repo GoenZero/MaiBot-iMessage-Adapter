@@ -46,7 +46,8 @@
     "send.text",
     "send.hybrid",
     "chat.get_all_streams",
-    "maisaka.context.append"
+    "maisaka.context.append",
+    "llm.transcribe_audio"
   ],
   "i18n": {
     "default_locale": "zh-CN",

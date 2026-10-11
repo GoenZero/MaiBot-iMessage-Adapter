@@ -30,7 +30,7 @@ export type InboundPart =
   | { type: "image"; path: string; mime: string; name: string; size: number }
   | { type: "file"; mime: string; name: string; size?: number; note?: string }
   | { type: "text_file"; path: string; mime: string; name: string; size: number }
-  | { type: "voice"; id?: string; mime: string; duration?: number; size?: number }
+  | { type: "voice"; id?: string; mime: string; duration?: number; size?: number; path?: string; note?: string }
   | { type: "contact"; name?: string; phones: string[]; emails: string[]; org?: string; urls: string[] }
   | { type: "link"; url: string }
   | { type: "app"; url?: string; caption?: string }
@@ -81,6 +81,10 @@ export interface ConvertOptions {
   /** 下载文本类文件（.md、.txt 等）的回调；不提供则只告诉 AI 文件名。 */
   saveTextFile?: SaveImage;
   maxTextFileBytes?: number;
+  /** 下载语音的回调（开启「语音转文字」时才提供）；不提供则只告诉 AI 收到了语音。 */
+  saveVoice?: SaveImage;
+  /** 语音下载失败后的重试间隔（毫秒），测试时可设为 0。 */
+  voiceRetryDelayMs?: number;
   /** 记录警告日志（下载失败等），不影响转换结果。 */
   warn: (message: string) => void;
 }
@@ -271,6 +275,11 @@ async function convertContent(
       if (id) part.id = id;
       if (duration !== undefined) part.duration = duration;
       if (size !== undefined) part.size = size;
+      if (options.saveVoice) {
+        const saved = await downloadVoice(content, options);
+        if (saved) part.path = saved;
+        else part.note = "download_failed";
+      }
       return { parts: [part] };
     }
 
@@ -336,6 +345,27 @@ async function convertContent(
     default:
       return { parts: [{ type: "unsupported", what: content.type }] };
   }
+}
+
+const VOICE_ATTEMPTS = 3;
+
+/**
+ * 下载语音。刚收到时附件可能还在从 Apple 传到服务器，下载会失败：等一会再试，最多 3 次。
+ * 都失败返回 undefined（调用方会让 AI 得体地告诉对方暂时听不了）。
+ */
+async function downloadVoice(content: ContentLike, options: ConvertOptions): Promise<string | undefined> {
+  const delay = options.voiceRetryDelayMs ?? 3000;
+  for (let attempt = 1; attempt <= VOICE_ATTEMPTS; attempt++) {
+    try {
+      return (await options.saveVoice!(content)).path;
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      options.warn(`语音下载失败（第 ${attempt} 次）：${String((error as Error).message ?? error)}`);
+      if (code === "TOO_LARGE") return undefined;
+      if (attempt < VOICE_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  return undefined;
 }
 
 function controlEvent(content: ContentLike): ControlEvent {

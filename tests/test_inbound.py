@@ -72,7 +72,7 @@ def test_non_image_parts_become_sentences():
     text = message["raw_message"][0]["data"]
     for expected in (
         "[对方发来一张联系人名片] 姓名：张三；电话：+86 138；邮箱：z@x.com；单位：某公司",
-        "[对方发来一条语音消息，约 4 秒，你暂时听不了语音]",
+        "[对方发来一条语音消息（约 4 秒）。你现在听不了语音：请简短、自然地告诉对方你暂时听不了语音，请对方打字]",
         "[对方发来一个文件：合同.pdf（application/pdf，2.0MB），你暂时打不开这类文件]",
         "文件太大，没有接收",
         "[链接] https://example.com",

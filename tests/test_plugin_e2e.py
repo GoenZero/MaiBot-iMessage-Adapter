@@ -619,3 +619,45 @@ def test_control_events_are_told_to_the_ai(tmp_path: Path, monkeypatch: pytest.M
     ]
     assert all(a["stream_id"] == "s-imessage" and a["source_kind"] == "imessage_event" for a in appended)
     assert appended[0]["segments"] == [{"type": "text", "data": texts[0]}]
+
+
+def test_voice_is_transcribed_or_politely_declined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    answers = iter([{"success": True, "text": "明天几点见", "content": "明天几点见"}, {"success": False, "error": "未配置 voice 任务"}])
+
+    original_rpc = host.rpc
+
+    async def rpc(method: str, plugin_id: str, payload: dict, timeout_ms: int | None = None) -> Any:
+        if method == "cap.call" and payload["capability"] == "llm.transcribe_audio":
+            host.calls.append((method, payload))
+            return next(answers)
+        return await original_rpc(method, plugin_id, payload, timeout_ms)
+
+    plugin._set_context(PluginContext("com.galeros.imessage_adapter", rpc, PluginPaths(data_dir=tmp_path / "data", runtime_dir=tmp_path / "runtime")))
+
+    def voice_message(message_id: str, path: Path | None) -> dict:
+        part: dict = {"type": "voice", "mime": "audio/x-caf", "duration": 3}
+        if path is not None:
+            path.write_bytes(b"caf-bytes")
+            part["path"] = str(path)
+        return {"message_id": message_id, "chat_id": "any;-;+1", "sender_id": "+1", "timestamp": 0, "parts": [part]}
+
+    async def main() -> None:
+        data = plugin.get_plugin_config_data()
+        data["voice"]["transcribe"] = True
+        plugin.set_plugin_config(data)
+        await plugin._handle_inbound_message(voice_message("v1", tmp_path / "v1.caf"))
+        await plugin._handle_inbound_message(voice_message("v2", tmp_path / "v2.caf"))
+        # 关闭时侧车不下载语音，没有 path
+        data["voice"]["transcribe"] = False
+        plugin.set_plugin_config(data)
+        await plugin._handle_inbound_message(voice_message("v3", None))
+
+    asyncio.run(main())
+    routed = [p["message"]["raw_message"][0]["data"] for p in host.of("host.route_message")]
+    assert routed[0] == "[对方发来一条语音消息（约 3 秒），转成文字是：明天几点见]"
+    assert "没能转成文字" in routed[1] and "请对方打字" in routed[1]
+    assert "你现在听不了语音" in routed[2]
+    asr = [p["args"] for p in host.of("cap.call") if p["capability"] == "llm.transcribe_audio"]
+    assert len(asr) == 2 and asr[0]["audio_base64"] == base64.b64encode(b"caf-bytes").decode()
+    assert not list(tmp_path.glob("*.caf"))  # 临时文件用完即删

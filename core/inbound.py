@@ -94,8 +94,13 @@ def describe_part(part: Dict[str, Any]) -> str:
         return describe_text_file(part)
     if kind == "voice":
         duration = part.get("duration")
-        length = f"，约 {round(duration)} 秒" if isinstance(duration, (int, float)) and duration > 0 else ""
-        return f"[对方发来一条语音消息{length}，你暂时听不了语音]"
+        length = f"（约 {round(duration)} 秒）" if isinstance(duration, (int, float)) and duration > 0 else ""
+        transcript = str(part.get("transcript") or "").strip()
+        if transcript:
+            return f"[对方发来一条语音消息{length}，转成文字是：{transcript}]"
+        if part.get("note") in ("download_failed", "transcribe_failed"):
+            return f"[对方发来一条语音消息{length}，但没能转成文字。请简短、自然地告诉对方你没听清这条语音，请对方打字]"
+        return f"[对方发来一条语音消息{length}。你现在听不了语音：请简短、自然地告诉对方你暂时听不了语音，请对方打字]"
     if kind == "contact":
         fields = []
         if part.get("name"):

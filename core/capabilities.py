@@ -155,6 +155,15 @@ REGISTRY: Sequence[Capability] = (
         ai_note=lambda c: EVENT_NOTE,
     ),
     Capability(
+        key="voice_receive",
+        title="语音转文字",
+        photon_call="入站 voice + MaiBot 语音识别",
+        plan="free",
+        kind="auto",
+        is_enabled=lambda c: c.voice.transcribe,
+        status_hint="关闭：收到语音时请对方改发文字",
+    ),
+    Capability(
         key="voice_send",
         title="发语音",
         photon_call="voice()",

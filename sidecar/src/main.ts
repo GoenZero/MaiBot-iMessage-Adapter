@@ -223,6 +223,10 @@ const convertOptions: ConvertOptions = {
 if (process.env.READ_TEXT_FILES !== "0") {
   convertOptions.saveTextFile = (content: ContentLike) => downloadWithTiming(content, MAX_TEXT_FILE_BYTES);
 }
+// 开启「语音转文字」（TRANSCRIBE_VOICE=1）时才下载语音
+if (process.env.TRANSCRIBE_VOICE === "1") {
+  convertOptions.saveVoice = (content: ContentLike) => downloadWithTiming(content, maxAttachmentBytes);
+}
 
 try {
   for await (const [space, rawMessage] of app.messages) {

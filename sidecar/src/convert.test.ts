@@ -214,3 +214,36 @@ test("文本文件（.md）下载后交出路径；太大的只给文件说明",
   assert.equal(pdf.data.parts[0]?.type, "file");
   assert.deepEqual(saved, ["笔记.md"]);
 });
+
+test("语音：开启转文字时下载（失败会重试），未开启时只给说明", async () => {
+  const voice: ContentLike = { type: "voice", id: "v1", mimeType: "audio/x-caf", duration: 4 };
+
+  const off = await convertInbound(msg("v-off", voice), options());
+  assert.ok(off.kind === "message");
+  assert.deepEqual(off.data.parts, [{ type: "voice", id: "v1", mime: "audio/x-caf", duration: 4 }]);
+
+  let tries = 0;
+  const flaky = await convertInbound(
+    msg("v-retry", voice),
+    options({
+      voiceRetryDelayMs: 0,
+      saveVoice: async () => {
+        tries++;
+        if (tries < 3) throw new Error("attachment not ready");
+        return { path: "/tmp/v1.caf", size: 10 };
+      },
+    }),
+  );
+  assert.equal(tries, 3);
+  assert.ok(flaky.kind === "message");
+  assert.equal(flaky.data.parts[0] && "path" in flaky.data.parts[0] ? flaky.data.parts[0].path : undefined, "/tmp/v1.caf");
+
+  const warnings: string[] = [];
+  const broken = await convertInbound(
+    msg("v-fail", voice),
+    options({ voiceRetryDelayMs: 0, warn: (m) => warnings.push(m), saveVoice: async () => Promise.reject(new Error("gone")) }),
+  );
+  assert.ok(broken.kind === "message");
+  assert.deepEqual(broken.data.parts[0], { type: "voice", id: "v1", mime: "audio/x-caf", duration: 4, note: "download_failed" });
+  assert.equal(warnings.length, 3);
+});
