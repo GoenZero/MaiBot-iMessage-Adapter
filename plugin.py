@@ -12,8 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
 
-from maibot_sdk import Command, HookHandler, MaiBotPlugin, MessageGateway
-from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder
+from maibot_sdk import Command, HookHandler, MaiBotPlugin, MessageGateway, Tool
+from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder, ToolParameterInfo, ToolParamType
 
 import asyncio
 import contextlib
@@ -40,6 +40,15 @@ PLATFORM = "imessage"
 SIDECAR_SCRIPT = Path(__file__).resolve().parent / "sidecar" / "dist" / "sidecar.mjs"
 # 侧车发一条消息的最长等待（MaiBot 给网关的上限是 60 秒）
 SEND_TIMEOUT = 45.0
+ACTION_TIMEOUT = 20.0
+
+REACT_DESCRIPTION = (
+    "给对方的某条 iMessage 消息加一个 Tapback 回应，就像在 iPhone 上长按消息选爱心或点赞。"
+    "适合：对方道谢、分享好消息、说了好笑的话，或你想表示认同但不必专门回一句时。"
+    "不要每条消息都点，一轮对话最多点一次；点了回应也可以照常回复。"
+    "kind 可选：love=爱心，like=赞，dislike=踩，laugh=哈哈，emphasize=感叹号（强调），question=问号。"
+)
+TAPBACK_NAMES = {"love": "爱心", "like": "赞", "dislike": "踩", "laugh": "哈哈", "emphasize": "感叹号", "question": "问号"}
 
 _STATE_TEXT = {
     "stopped": "⏹ 未运行",
@@ -63,6 +72,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         self._chat_by_user: Dict[str, str] = {}
         self._last_error: str = ""
         self._sessions = SessionDirectory(self._fetch_imessage_streams)
+        self._background: set[asyncio.Task[Any]] = set()
 
     """═══════════════════════════════════════════════
     生命周期
@@ -159,6 +169,17 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         except Exception as exc:
             self.ctx.logger.warning("查询聊天流失败：%s", exc)
             return None
+
+    async def _chat_for_stream(self, stream_id: str) -> Optional[str]:
+        """MaiBot 聊天流 ID → iMessage 对话编号。"""
+        user = await self._imessage_user_for(stream_id)
+        return self._chat_by_user.get(user, user) if user else None
+
+    def _spawn(self, coro: Any) -> None:
+        """后台执行一个不影响聊天主流程的动作（输入中、已读等）。"""
+        task = asyncio.create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     """═══════════════════════════════════════════════
     让 AI 知道：工具可见性与能力说明
@@ -277,6 +298,43 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         if result.get("partial"):
             self.ctx.logger.warning("消息只发出了一部分：%s", message_ids)
         return {"success": True, "external_message_id": message_ids[0] if message_ids else None}
+
+    """═══════════════════════════════════════════════
+    AI 工具
+    ═══════════════════════════════════════════════"""
+
+    @Tool(
+        "imessage_react",
+        description=REACT_DESCRIPTION,
+        parameters=[
+            ToolParameterInfo(name="msg_id", param_type=ToolParamType.STRING, description="要回应的那条消息的 msg_id"),
+            ToolParameterInfo(
+                name="kind",
+                param_type=ToolParamType.STRING,
+                description="回应类型",
+                enum_values=list(TAPBACK_NAMES),
+            ),
+        ],
+        chat_scope="private",
+    )
+    async def tool_react(self, msg_id: str = "", kind: str = "", stream_id: str = "", **kwargs: Any) -> Dict[str, Any]:
+        del kwargs
+        if not self.config.capabilities.reactions:
+            return {"success": False, "error": "点赞回应已在设置里关闭"}
+        supervisor = self._supervisor
+        chat_id = await self._chat_for_stream(stream_id)
+        if supervisor is None or chat_id is None:
+            return {"success": False, "error": "当前不是 iMessage 聊天，不能点赞回应"}
+        if kind not in TAPBACK_NAMES:
+            return {"success": False, "error": f"kind 只能是 {', '.join(TAPBACK_NAMES)}"}
+        try:
+            await supervisor.request("react", {"chat_id": chat_id, "message_id": msg_id, "kind": kind}, timeout=ACTION_TIMEOUT)
+        except SidecarError as exc:
+            self.ctx.logger.warning("点赞回应失败 %s", exc)
+            if exc.code == "MESSAGE_NOT_FOUND":
+                return {"success": False, "error": "找不到这条消息（可能太久远，或适配器重启过），这次没点成"}
+            return {"success": False, "error": f"这次没点成：{exc.message}"}
+        return {"success": True, "content": f"已给这条消息点了「{TAPBACK_NAMES[kind]}」"}
 
     """═══════════════════════════════════════════════
     管理命令

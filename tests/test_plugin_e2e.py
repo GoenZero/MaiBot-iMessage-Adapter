@@ -56,12 +56,22 @@ def make_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, emit: bool) 
     )
     monkeypatch.setattr(plugin_module, "SIDECAR_SCRIPT", FAKE)
     monkeypatch.setenv("FAKE_EMIT", "1" if emit else "0")
+    monkeypatch.setenv("FAKE_LOG", str(tmp_path / "ops.jsonl"))
 
     async def fake_resolve(configured: str, logger: Any) -> tuple[str, str]:
         return NODE, "vtest"
 
     monkeypatch.setattr(plugin_module, "resolve_node", fake_resolve)
     return plugin, host
+
+
+def sidecar_ops(tmp_path: Path) -> list[dict[str, Any]]:
+    log = tmp_path / "ops.jsonl"
+    if not log.exists():
+        return []
+    import json
+
+    return [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
 
 
 async def wait_for(predicate, timeout: float = 10.0) -> None:
@@ -170,3 +180,25 @@ def test_planner_hook_distinguishes_imessage_chats(tmp_path: Path, monkeypatch: 
         await plugin.on_unload()
 
     asyncio.run(main())
+
+
+def test_react_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        ok = await plugin.tool_react(msg_id="m1", kind="love", stream_id="s-imessage")
+        assert ok == {"success": True, "content": "已给这条消息点了「爱心」"}
+        missing = await plugin.tool_react(msg_id="missing", kind="like", stream_id="s-imessage")
+        assert missing["success"] is False and "找不到这条消息" in missing["error"]
+        wrong_kind = await plugin.tool_react(msg_id="m1", kind="angry", stream_id="s-imessage")
+        assert wrong_kind["success"] is False
+        not_imessage = await plugin.tool_react(msg_id="m1", kind="love", stream_id="s-qq")
+        assert not_imessage["success"] is False and "不是 iMessage" in not_imessage["error"]
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    reacts = [op for op in sidecar_ops(tmp_path) if op["op"] == "react"]
+    assert reacts[0]["args"] == {"chat_id": "+1", "message_id": "m1", "kind": "love"}
+    assert len(reacts) == 2

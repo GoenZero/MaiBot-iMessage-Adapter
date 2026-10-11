@@ -1,4 +1,5 @@
 // 测试用的假侧车：实现与真侧车相同的协议，不连 Photon。
+import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const mode = process.env.FAKE_MODE ?? "ok";
@@ -22,7 +23,15 @@ if (process.env.FAKE_EMIT === "1") {
 const rl = createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const req = JSON.parse(line);
+  if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify(req) + "\n");
   switch (req.op) {
+    case "react":
+      if (req.args.message_id === "missing") {
+        frame({ t: "res", id: req.id, ok: false, error: { code: "MESSAGE_NOT_FOUND", message: "找不到" } });
+      } else {
+        frame({ t: "res", id: req.id, ok: true, result: { reaction_id: "rx-" + req.id } });
+      }
+      break;
     case "send":
       frame({ t: "res", id: req.id, ok: true, result: { message_ids: ["out-" + req.id], quoted: Boolean(req.args.reply_to), partial: false } });
       break;
