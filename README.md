@@ -65,7 +65,18 @@ MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.j
 | `[capabilities]` | `reactions` | true | 允许 AI 点爱心、点赞等（Tapback） |
 | `[capabilities]` | `reply_mode` | auto | 引用回复：auto = AI 自己决定，always = 总是引用对方最新一句，off = 不引用 |
 | `[capabilities]` | `markdown` | true | AI 回复里的 Markdown 格式显示成 iMessage 样式 |
+| `[capabilities]` | `read_text_files` | true | 对方发来 .txt、.md 等文本文件时，把内容交给 AI |
+| `[capabilities]` | `edit_unsend` | true | 允许 AI 修改、撤回自己刚发的消息，以及撤回自己点的回应 |
+| `[capabilities]` | `effects` | true | 允许 AI 发带特效的消息（气球、烟花、隐形墨水等） |
+| `[capabilities]` | `polls` | true | 允许 AI 发起投票 |
+| `[capabilities]` | `chat_background` | true | 你要求时，AI 可以设置或清除聊天背景 |
+| `[capabilities]` | `share_contact` | true | 你要求时，AI 可以分享机器人账号的名字和头像 |
+| `[capabilities]` | `link_preview` | true | 一段回复只有一个链接时，以链接预览卡片发出 |
+| `[capabilities]` | `notify_reactions` | true | 对方点赞、在投票里选了选项时告诉 AI |
+| `[capabilities]` | `notify_read` | true | 对方读了 AI 的消息时告诉 AI（同一批只提醒一次） |
 | `[media]` | `image_max_edge` | 2048 | 收到的图片长边超过多少像素就缩小，0 表示不缩小；HEIC 一律转成 JPEG |
+| `[voice]` | `transcribe` | false | 收到语音时用 MaiBot 的语音识别转成文字（要先在 MaiBot 配好语音识别模型）。关闭时 AI 会请对方改发文字 |
+| `[voice]` | `tts_service` | "" | 预留：以后接入语音合成时使用，当前版本不会用到 |
 
 从 0.1.x 升级时，MaiBot 会自动把旧配置迁移到新结构，已填写的项目 ID、密钥等会保留；旧的「桥接端口」不再需要。
 
@@ -91,6 +102,22 @@ MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码，否则
 | `/imessage_status` | 查看连接状态、版本、重启次数、最近错误 |
 | `/imessage_reconnect` | 手动重连（认证失败停下后，改好配置也可以用它重试） |
 
+### AI 能做的事
+
+除了正常回复，AI 在 iMessage 私聊里还能用这些工具（每项都能在 WebUI「iMessage 能力」里单独关掉，关掉后 AI 就看不到）：
+
+| 工具 | 作用 |
+|---|---|
+| `imessage_react` | 给某条消息点爱心、赞、哈哈等（Tapback），也能撤回自己点过的 |
+| `imessage_edit` | 修改自己刚发的消息（iMessage 限 15 分钟内） |
+| `imessage_unsend` | 撤回自己刚发的消息（iMessage 限 2 分钟内） |
+| `imessage_send_effect` | 发一条带特效的消息，例如生日时放烟花 |
+| `imessage_poll` | 发起投票 |
+| `imessage_background` | 把你发的某张图片设为聊天背景，或清除背景 |
+| `imessage_share_contact` | 用「共享名字与照片」把机器人账号的名字和头像发给你 |
+
+另外这些是自动完成的：输入中提示、自动已读、引用回复、Markdown 样式、链接预览卡片。
+
 ### 收到的消息怎么交给 AI
 
 | 对方发来的 | AI 看到的 |
@@ -100,7 +127,10 @@ MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码，否则
 | 文字和多张照片一起发 | 文字和每一张图片，顺序不变 |
 | 长按某句话「回复」 | 消息本身，并标明引用的是哪一句 |
 | 联系人名片 | 姓名、电话、邮箱、单位 |
-| 语音、文件、链接、投票、应用卡片 | 一句说明，例如「对方发来一条语音消息，你暂时听不了语音」 |
+| .txt、.md 等文本文件 | 文件内容（最多 6000 字） |
+| 语音 | 开启「语音转文字」时是转写结果；否则是一句说明，并请 AI 告诉对方暂时听不了、请对方打字 |
+| 其他文件、链接、投票、应用卡片 | 一句说明 |
+| 给消息点赞、在投票里选选项、已读 | 一条系统通知，例如 `<imessage_event>对方给你的消息「晚安」点了「爱心」回应</imessage_event>`。不会叫醒 AI，AI 下一轮能看到 |
 | 其他不认识的内容 | 「对方发了一条暂不支持的内容：…」 |
 
 任何消息都不会被整条丢掉。

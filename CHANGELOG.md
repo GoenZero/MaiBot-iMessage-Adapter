@@ -23,6 +23,20 @@
 - **上报机器人账号**：「Photon 云端」新增「Photon 号码」。填写后，适配器在连接成功时通过网关状态（`update_state` 的 `account_id`）把它上报给 MaiBot，MaiBot 会自动记为 iMessage 平台的机器人账号，不必再到「平台账号 → 备用账号」里手动添加。首次填写或更改后，这个 iMessage 对话会成为新的聊天流。
 - **手动重连不再重复重启**：修复 `/imessage_reconnect` 和自动重启同时触发、侧车被拉起两次的问题。
 
+### 第二次交付（任务书第 3–4 步）
+
+- **编辑与撤回**：新增 AI 工具 `imessage_edit`（修改自己 15 分钟内发的消息）和 `imessage_unsend`（撤回自己 2 分钟内发的消息）。文字加图片的回复会发成好几条 iMessage，撤回时一起撤。`imessage_react` 新增 `remove`，可撤回自己点过的回应。
+- **消息特效**：新增 AI 工具 `imessage_send_effect`，支持 13 种特效（气球、烟花、彩纸、隐形墨水等）。消息走 MaiBot 的正常发送流程，AI 的聊天记录里显示为「生日快乐[烟花特效消息]」。
+- **投票**：新增 AI 工具 `imessage_poll`，2 到 12 个选项。iMessage 的投票不能以引用的形式发出，所以投票一律普通发送。
+- **聊天背景**：新增 AI 工具 `imessage_background`，可以把对话里某条消息的图片设为背景，或者清除背景。
+- **分享名片**：新增 AI 工具 `imessage_share_contact`，用 iMessage 的「共享名字与照片」把机器人账号的名字和头像发给对方。
+- **链接预览**：AI 的一段回复只有一个链接时，以链接预览卡片发出。
+- **发语音（预留）**：WebUI 新增「语音」配置页，留了「语音合成服务」的位置。还没有接入语音合成，AI 看不到这项能力，`/imessage_status` 里显示为「预留」。
+- **对方的点赞、投票、已读告诉 AI**：以 `<imessage_event>…</imessage_event>` 系统通知的形式写进 AI 的聊天记录，和 MaiBot 自己的插件通知写法一致，AI 不会当成对方说的话。不叫醒 AI，AI 下一轮能看到。「已读」同一批消息只提醒一次。
+- **收语音**：新增「语音转文字」开关（默认关）。开启后，侧车下载语音（附件可能还在上传，失败会隔 3 秒重试，最多 3 次），交给 MaiBot 的语音识别转成文字。关闭或失败时，AI 会得体地告诉对方暂时听不了语音（或没听清），请对方打字。
+- 工具改放在 `tools.py`；能力注册表允许一个开关管几个工具。每项新能力都有 WebUI 开关，关掉后 AI 看不到对应工具。
+- 配置结构版本升到 2.2.0。
+
 ### 真机测试第一轮返修
 
 - 修改能力开关、引用档位、图片处理等设置时，不再重启侧车，立即生效；只有改 Photon 凭证、侧车参数或「读取文本文件」时才重连。
@@ -59,4 +73,4 @@
 - 侧车日志中的 Project Secret 会被遮蔽。
 - 删除 `debug.py` 调试发送脚本，以及不再需要的 Python 依赖 websockets、tomlkit。
 - 插件声明需要 maibot-plugin-sdk 2.10.0 或以上。
-- 新增自动测试：侧车 31 项（`cd sidecar && npm run check`），Python 56 项（`python -m pytest tests`）。
+- 新增自动测试：侧车 35 项（`cd sidecar && npm run check`），Python 68 项（`python -m pytest tests`）。
