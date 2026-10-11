@@ -58,6 +58,9 @@ export type ControlEvent =
   | { type: "reaction"; emoji: string; target_id: string; target_text?: string; target_from_me?: boolean }
   | { type: "read"; target_id: string }
   | { type: "poll_vote"; poll_title: string; option: string; selected: boolean }
+  | { type: "edited"; target_id: string; text: string; old_text?: string; target_from_me?: boolean }
+  | { type: "unsent"; target_id: string; old_text?: string; target_from_me?: boolean }
+  | { type: "reaction_removed"; emoji: string; target_id: string; target_text?: string; target_from_me?: boolean }
   | { type: "other"; content_type: string };
 
 export interface InboundControl {
@@ -88,6 +91,8 @@ export interface ConvertOptions {
   voiceRetryDelayMs?: number;
   /** 每次下载语音的最长等待（毫秒）。下载期间后面的消息都要排队，所以要有上限。 */
   voiceTimeoutMs?: number;
+  /** 按编号查已缓存的消息（对方编辑、撤回时，用来告诉 AI 原来那句是什么）。 */
+  lookupMessage?: (id: string) => MessageLike | undefined;
   /** 记录警告日志（下载失败等），不影响转换结果。 */
   warn: (message: string) => void;
 }
@@ -412,6 +417,44 @@ function controlEvent(content: ContentLike, eventId: string): ControlEvent {
   }
 }
 
+/**
+ * 对方编辑、撤回、取消点赞：SDK 本身不转发，打包补丁把它们转成 custom 内容（见 build-config.mjs）。
+ * 不是这种内容时返回 undefined。
+ */
+function changeEvent(content: ContentLike, options: ConvertOptions): ControlEvent | undefined {
+  if (content.type !== "custom") return undefined;
+  const raw = content.raw as Record<string, unknown> | undefined;
+  const kind = str(raw?.imessage_change);
+  const guid = str(raw?.message_guid);
+  if (!kind || !guid) return undefined;
+  const partIndex = num(raw?.part_index);
+  // 组合消息的某一部分，缓存里的编号是 p:<序号>/<编号>
+  const original = (partIndex !== undefined ? options.lookupMessage?.(`p:${partIndex}/${guid}`) : undefined) ?? options.lookupMessage?.(guid);
+  const oldText = previewText(original?.content);
+  const fromMe = original?.direction ? original.direction === "outbound" : undefined;
+  const extras = <T extends object>(event: T): T => {
+    const out = { ...event } as T & { old_text?: string; target_from_me?: boolean };
+    if (fromMe !== undefined) out.target_from_me = fromMe;
+    return out;
+  };
+  if (kind === "message.edited") {
+    const event: ControlEvent = extras({ type: "edited" as const, target_id: guid, text: str(raw?.text) ?? "" });
+    if (oldText) event.old_text = oldText;
+    return event;
+  }
+  if (kind === "message.unsent") {
+    const event: ControlEvent = extras({ type: "unsent" as const, target_id: guid });
+    if (oldText) event.old_text = oldText;
+    return event;
+  }
+  if (kind === "message.reactionRemoved") {
+    const event: ControlEvent = extras({ type: "reaction_removed" as const, emoji: String(raw?.reaction ?? ""), target_id: guid });
+    if (oldText) event.target_text = oldText;
+    return event;
+  }
+  return { type: "other", content_type: kind };
+}
+
 /** 把一条 SDK 消息转换成发给 Python 的结果。 */
 export async function convertInbound(message: MessageLike, options: ConvertOptions): Promise<InboundResult> {
   // 自己发出的消息回显不是用户的话，不转发
@@ -420,6 +463,11 @@ export async function convertInbound(message: MessageLike, options: ConvertOptio
   const chatId = message.space?.id ?? "";
   const senderId = message.sender?.id ?? "";
   const timestamp = message.timestamp instanceof Date ? message.timestamp.getTime() : Date.now();
+
+  const change = changeEvent(message.content, options);
+  if (change) {
+    return { kind: "control", data: { event_id: message.id, chat_id: chatId, sender_id: senderId, timestamp, event: change } };
+  }
 
   if (CONTROL_TYPES.has(message.content.type)) {
     return {

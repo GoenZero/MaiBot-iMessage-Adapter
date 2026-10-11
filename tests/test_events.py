@@ -53,3 +53,13 @@ def test_session_lookup_prefers_current_bot_account():
 
     asyncio.run(main())
     assert calls >= 1
+
+
+def test_edit_unsend_and_reaction_removed_notices():
+    edited = describe_control_event({"type": "edited", "text": "明天九点", "old_text": "明天八点"})
+    assert edited == "<imessage_event>对方把消息「明天八点」改成了「明天九点」</imessage_event>"
+    assert "对方修改了一条消息，改成了「x」" in describe_control_event({"type": "edited", "text": "x"})
+    assert describe_control_event({"type": "unsent", "old_text": "说错了"}) == "<imessage_event>对方撤回了消息「说错了」</imessage_event>"
+    assert describe_control_event({"type": "unsent"}) == "<imessage_event>对方撤回了一条消息</imessage_event>"
+    removed = describe_control_event({"type": "reaction_removed", "emoji": "❤️", "target_text": "晚安", "target_from_me": True})
+    assert removed == "<imessage_event>对方取消了给你的消息「晚安」点的「爱心」回应</imessage_event>"

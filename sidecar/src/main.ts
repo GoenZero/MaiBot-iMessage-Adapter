@@ -214,6 +214,7 @@ async function downloadWithTiming(content: ContentLike, limit: number): Promise<
 }
 
 const convertOptions: ConvertOptions = {
+  lookupMessage: (id: string) => handles.get(id),
   maxImageBytes: maxAttachmentBytes,
   maxTextFileBytes: MAX_TEXT_FILE_BYTES,
   warn: (message: string) => log("WARN", message),

@@ -35,8 +35,8 @@ if (stats.patched !== 1) {
   console.error(`advanced-imessage 的 gRPC 依赖检查修补次数为 ${stats.patched}，应为 1`);
   process.exit(1);
 }
-if (stats.pollPatched !== 1) {
-  console.error(`@spectrum-ts/imessage 的投票标题修补次数为 ${stats.pollPatched ?? 0}，应为 1`);
+if (stats.pollPatched !== 1 || stats.changePatched !== 1) {
+  console.error(`@spectrum-ts/imessage 的修补次数不对（投票标题 ${stats.pollPatched ?? 0}，编辑撤回 ${stats.changePatched ?? 0}），都应为 1`);
   process.exit(1);
 }
 

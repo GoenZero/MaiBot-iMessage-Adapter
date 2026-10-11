@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Sequence, Tuple
 
-EVENT_NOTE = "<imessage_event> 是系统通知（点赞、投票、已读），不是对方的话，不必都回应。"
+EVENT_NOTE = "<imessage_event> 是系统通知，不是对方说的话，不必都回应。"
 
 REPLY_MODE_TEXT = {
     "always": "总是引用",
@@ -143,6 +143,15 @@ REGISTRY: Sequence[Capability] = (
         plan="free",
         kind="auto",
         is_enabled=lambda c: _caps(c).notify_reactions,
+        ai_note=lambda c: EVENT_NOTE,
+    ),
+    Capability(
+        key="inbound_edits",
+        title="告诉 AI 对方的编辑和撤回",
+        photon_call="入站 message.edited / message.unsent（打包补丁转发）",
+        plan="free",
+        kind="auto",
+        is_enabled=lambda c: _caps(c).notify_edits,
         ai_note=lambda c: EVENT_NOTE,
     ),
     Capability(

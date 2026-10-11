@@ -3,7 +3,7 @@
  *
  * 实测（真机第二轮）：Photon 送回来的投票事件里标题是空的，spectrum-ts 缓存投票时要求标题非空，
  * 缓存失败后，对方的每一次投票都会被丢掉。打包时把 SDK 里的空标题换成 UNTITLED_POLL（见
- * build-config.mjs 的 untitledPollPlugin），对方的投票就能正常送到；标题再从这里补回来：
+ * build-config.mjs 的 imessagePatchesPlugin），对方的投票就能正常送到；标题再从这里补回来：
  * AI 发起的投票，发送时记下「投票消息编号 → 标题」。
  */
 

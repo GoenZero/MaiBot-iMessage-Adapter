@@ -1,4 +1,4 @@
-"""对方的点赞、投票选择、已读 → 给 AI 看的一句系统通知。
+"""对方的点赞、投票选择、已读、编辑、撤回 → 给 AI 看的一句系统通知。
 
 通知用 <imessage_event> 包起来，和 MaiBot 自己的插件通知（<plugin_proactive_task>）写法一致，
 让 AI 分得清这是系统通知，不是对方说的话。
@@ -43,4 +43,22 @@ def describe_control_event(event: Dict[str, Any]) -> Optional[str]:
         return wrap_event(f"对方在{where}{verb}「{option}」")
     if kind == "read":
         return wrap_event("对方已读了你发的消息")
+    if kind == "edited":
+        new_text = _clip(event.get("text"))
+        old_text = _clip(event.get("old_text"))
+        if old_text:
+            return wrap_event(f"对方把消息「{old_text}」改成了「{new_text}」")
+        return wrap_event(f"对方修改了一条消息，改成了「{new_text}」")
+    if kind == "unsent":
+        old_text = _clip(event.get("old_text"))
+        return wrap_event(f"对方撤回了消息「{old_text}」" if old_text else "对方撤回了一条消息")
+    if kind == "reaction_removed":
+        emoji = str(event.get("emoji") or "")
+        name = TAPBACK_TEXT.get(emoji.replace("\ufe0f", ""))
+        label = f"「{name or emoji}」" if (name or emoji) else ""
+        from_me = event.get("target_from_me")
+        whose = "你的消息" if from_me is True else "一条消息"
+        preview = _clip(event.get("target_text"))
+        target = f"{whose}「{preview}」" if preview else whose
+        return wrap_event(f"对方取消了给{target}点的{label}回应")
     return None

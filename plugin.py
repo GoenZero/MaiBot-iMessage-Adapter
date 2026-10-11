@@ -342,7 +342,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
                 part["note"] = "transcribe_failed"
 
     async def _handle_control_event(self, data: Dict[str, Any]) -> None:
-        """对方点赞、投票选择、已读：以系统通知的形式写进 AI 的聊天记录（不唤醒 AI，下一轮能看到）。"""
+        """对方点赞、投票选择、编辑、撤回、已读：以系统通知的形式写进 AI 的聊天记录（不唤醒 AI，下一轮能看到）。"""
         event = data.get("event") if isinstance(data.get("event"), dict) else {}
         kind = str(event.get("type", ""))
         chat_id = str(data.get("chat_id", ""))
@@ -352,8 +352,11 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             self._chat_by_user[sender_id] = chat_id
 
         previous_note: Optional[float] = None
-        if kind in ("reaction", "poll_vote"):
+        if kind in ("reaction", "reaction_removed", "poll_vote"):
             if not capability("inbound_reactions").enabled(self.config):
+                return
+        elif kind in ("edited", "unsent"):
+            if not capability("inbound_edits").enabled(self.config):
                 return
         elif kind == "read":
             # 同一批消息只提醒一次：上次提醒之后 AI 又发过消息，才再提醒。按对方号码记

@@ -353,11 +353,20 @@ class CapabilitiesConfig(PluginConfigBase):
     )
     notify_reactions: bool = Field(
         default=True,
-        description="对方给消息点赞、或在投票里选了选项时，告诉 AI（AI 在下一轮能看到）。",
+        description="对方给消息点赞（或取消点赞）、在投票里选了选项时，告诉 AI（AI 在下一轮能看到）。",
         json_schema_extra={
             "i18n": _schema_i18n(label_en="Tell the AI about tapbacks and votes", label_ja="相手のリアクションと投票を AI に伝える", label_ko="상대의 반응과 투표를 AI에게 알림"),
             "label": "告诉 AI 对方的点赞和投票",
             "order": 12,
+        },
+    )
+    notify_edits: bool = Field(
+        default=True,
+        description="对方编辑或撤回自己的消息时告诉 AI，并附上原来那句（如果还记得）。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Tell the AI about edits and unsends", label_ja="編集と取り消しを AI に伝える", label_ko="편집 및 전송 취소를 AI에게 알림"),
+            "label": "告诉 AI 对方的编辑和撤回",
+            "order": 14,
         },
     )
     notify_read: bool = Field(

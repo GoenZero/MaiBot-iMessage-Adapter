@@ -270,3 +270,37 @@ test("投票没有标题时（Photon 实测如此），用 AI 发起时记下的
   const unknown = await vote("other-poll:+1:opt-1:selected:1", UNTITLED_POLL);
   assert.equal(unknown.kind === "control" && (unknown.data.event as { poll_title: string }).poll_title, "");
 });
+
+test("对方编辑、撤回、取消点赞变成控制事件，并带上原来那句", async () => {
+  const cached: Record<string, MessageLike> = {
+    "GUID-1": msg("GUID-1", { type: "text", text: "明天八点" }),
+    "BOT-1": msg("BOT-1", { type: "text", text: "晚安" }, { direction: "outbound" }),
+  };
+  const opts = options({ lookupMessage: (id) => cached[id] });
+  const change = (raw: Record<string, unknown>) => convertInbound(msg("c", { type: "custom", raw }), opts);
+
+  const edited = await change({ imessage_change: "message.edited", message_guid: "GUID-1", text: "明天九点" });
+  assert.deepEqual(edited.kind === "control" && edited.data.event, {
+    type: "edited",
+    target_id: "GUID-1",
+    text: "明天九点",
+    old_text: "明天八点",
+    target_from_me: false,
+  });
+  const unsent = await change({ imessage_change: "message.unsent", message_guid: "GUID-1" });
+  assert.deepEqual(unsent.kind === "control" && unsent.data.event, { type: "unsent", target_id: "GUID-1", old_text: "明天八点", target_from_me: false });
+  const removed = await change({ imessage_change: "message.reactionRemoved", message_guid: "BOT-1", reaction: "❤️" });
+  assert.deepEqual(removed.kind === "control" && removed.data.event, {
+    type: "reaction_removed",
+    emoji: "❤️",
+    target_id: "BOT-1",
+    target_text: "晚安",
+    target_from_me: true,
+  });
+  // 缓存里没有原消息（例如重启过）：只给新内容
+  const unknown = await change({ imessage_change: "message.edited", message_guid: "OLD", text: "x" });
+  assert.deepEqual(unknown.kind === "control" && unknown.data.event, { type: "edited", target_id: "OLD", text: "x" });
+  // 其他插件或别的 custom 内容照旧当作暂不支持的内容
+  const other = await convertInbound(msg("o", { type: "custom", raw: { imessage_type: "unsupported-message" } }), opts);
+  assert.equal(other.kind, "message");
+});

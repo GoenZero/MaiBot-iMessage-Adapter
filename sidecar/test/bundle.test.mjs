@@ -70,3 +70,33 @@ test("打包产物里，投票的空标题会换成占位标题（否则对方�
   // 打包时变量名会被改（例如 input3），只认结构
   assert.match(bundled, new RegExp(`toCachedPoll=.{0,60}title:\\w+\\.title\\|\\|${JSON.stringify(UNTITLED_POLL)}`));
 });
+
+test("修补后，对方的编辑、撤回、取消点赞会被转发（机器人自己的不转发）", async () => {
+  const { patchImessageSource } = await import("../build-config.mjs");
+  const dist = join(here, "..", "node_modules", "@spectrum-ts", "imessage", "dist");
+  const patchedFile = join(dist, `.patched-test-${process.pid}.js`);
+  const source = readFileSync(join(dist, "index.js"), "utf8");
+  // 放在原文件旁边，相对导入才能解析；末尾导出内部函数供测试调用
+  writeFileSync(patchedFile, `${patchImessageSource(source)}\nexport { toMessageItem as __toMessageItem };\n`);
+  try {
+    const { __toMessageItem: toMessageItem } = await import(patchedFile);
+    const base = { chatGuid: "any;-;+15550001111", isFromMe: false, occurredAt: new Date(0), sequence: 7, messageGuid: "GUID-1" };
+    const edited = await toMessageItem({}, { ...base, type: "message.edited", content: { text: "改后的话" } }, "shared", "c1");
+    assert.equal(edited.values.length, 1);
+    const value = edited.values[0];
+    assert.equal(value.sender.id, "+15550001111");
+    assert.equal(value.space.id, "any;-;+15550001111");
+    assert.deepEqual(value.content, {
+      type: "custom",
+      raw: { imessage_change: "message.edited", message_guid: "GUID-1", text: "改后的话", reaction: undefined, part_index: undefined },
+    });
+    const unsent = await toMessageItem({}, { ...base, type: "message.unsent" }, "shared", "c2");
+    assert.equal(unsent.values[0].content.raw.imessage_change, "message.unsent");
+    const removed = await toMessageItem({}, { ...base, type: "message.reactionRemoved", reaction: { kind: "love" } }, "shared", "c3");
+    assert.equal(removed.values[0].content.raw.reaction, "❤️");
+    const mine = await toMessageItem({}, { ...base, isFromMe: true, type: "message.unsent" }, "shared", "c4");
+    assert.deepEqual(mine.values, []);
+  } finally {
+    rmSync(patchedFile, { force: true });
+  }
+});
