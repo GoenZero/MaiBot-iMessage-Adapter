@@ -12,7 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
 
-from maibot_sdk import Command, MaiBotPlugin, MessageGateway
+from maibot_sdk import Command, HookHandler, MaiBotPlugin, MessageGateway
+from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder
 
 import asyncio
 import contextlib
@@ -23,10 +24,13 @@ import time
 
 from .config import PLUGIN_VERSION, IMessageAdapterConfig
 from .core.bridge import SidecarError, SidecarSupervisor
+from .core.capabilities import all_tool_names, build_brief, disabled_tool_names, status_lines
 from .core.inbound import build_maibot_message
 from .core.media import load_image_file
 from .core.node_runtime import resolve_node
 from .core.outbound import build_outbound_plan, resolve_target
+from .core.planner import adjust_planner_request
+from .core.sessions import SessionDirectory
 
 if TYPE_CHECKING:
     from maibot_sdk import PluginConfigBase
@@ -58,6 +62,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         # 对方用户 ID（手机号/邮箱）→ iMessage 对话编号
         self._chat_by_user: Dict[str, str] = {}
         self._last_error: str = ""
+        self._sessions = SessionDirectory(self._fetch_imessage_streams)
 
     """═══════════════════════════════════════════════
     生命周期
@@ -143,6 +148,50 @@ class IMessageAdapterPlugin(MaiBotPlugin):
             await self.ctx.gateway.update_state(GATEWAY_NAME, ready=True, platform=PLATFORM, metadata={"protocol": "photon"})
         else:
             await self.ctx.gateway.update_state(GATEWAY_NAME, ready=False)
+
+    async def _fetch_imessage_streams(self) -> Any:
+        return await self.ctx.chat.get_all_streams(platform=PLATFORM)
+
+    async def _imessage_user_for(self, session_id: str) -> Optional[str]:
+        """MaiBot 聊天流 ID → 对方的 iMessage 地址；不是 iMessage 私聊返回 None。"""
+        try:
+            return await self._sessions.user_for(session_id)
+        except Exception as exc:
+            self.ctx.logger.warning("查询聊天流失败：%s", exc)
+            return None
+
+    """═══════════════════════════════════════════════
+    让 AI 知道：工具可见性与能力说明
+    ═══════════════════════════════════════════════"""
+
+    @HookHandler(
+        "maisaka.planner.before_request",
+        name="imessage_planner_context",
+        description="iMessage 聊天里插入能力说明、隐藏已关闭的能力；其他平台的聊天隐藏 iMessage 工具",
+        mode=HookMode.BLOCKING,
+        order=HookOrder.LATE,
+        timeout_ms=5000,
+        error_policy=ErrorPolicy.SKIP,
+    )
+    async def on_planner_request(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        session_id = str(kwargs.get("session_id") or "")
+        active = self._supervisor is not None
+        is_imessage = active and await self._imessage_user_for(session_id) is not None
+        if is_imessage:
+            hidden = disabled_tool_names(self.config)
+            brief = build_brief(self.config)
+        else:
+            hidden, brief = all_tool_names(), ""
+        modified = adjust_planner_request(
+            kwargs,
+            is_imessage=is_imessage,
+            hidden_tools=hidden,
+            reply_mode=self.config.capabilities.reply_mode,
+            brief=brief,
+        )
+        if modified is None:
+            return None
+        return {"action": "continue", "modified_kwargs": modified}
 
     """═══════════════════════════════════════════════
     入站：iMessage → MaiBot
@@ -262,6 +311,8 @@ class IMessageAdapterPlugin(MaiBotPlugin):
             if last_error:
                 lines.append(f"最近错误：{self._redact(last_error)[:200]}")
         lines.append(f"Photon 项目：{self.config.photon.project_id or '未配置'}")
+        lines.append("能力：")
+        lines.extend(f"  {line}" for line in status_lines(self.config))
         await self.ctx.send.text("\n".join(lines), stream_id)
         return True, "状态已显示", True
 

@@ -13,6 +13,8 @@
 - **侧车打包发布**：侧车在开发时打包成一个文件（`sidecar/dist/sidecar.mjs`）随仓库提交。设备上不再执行 npm install，也不再编译，首次启动只需准备 Node.js。
 - **自动重启不再放弃**：前几次快速重试，之后间隔逐渐拉长（最长 5 分钟），断网恢复后能自己连上。只有 Photon 认证失败才停，修改配置后会自动重连。
 - **HEIC 照片转 JPEG**：iPhone 默认拍的 HEIC/HEIF 照片在适配器里转成 JPEG 再交给 MaiBot，并按照片记录的方向摆正。长边超过 2048 像素的图片会缩小（WebUI「图片处理」可调），超过 4MB 的大图会重新压缩。新增 Python 依赖 pillow-heif。
+- **能力注册表与开关**：每项 iMessage 能力在 `core/capabilities.py` 里登记一条（名称、Photon 调用、套餐、给 AI 的说明），WebUI 新增「iMessage 能力」配置页，每项都能单独关掉。`/imessage_status` 会列出各项能力的开关状态。
+- **让 AI 知道自己能做什么**：在 iMessage 聊天里，规划器请求前会在人设后面插入一段由能力注册表生成的短说明（200 token 以内，只随配置变化）。关闭的能力既不出现在说明里，对应工具也会从 AI 的工具列表里拿掉。QQ 等其他平台的聊天看不到 iMessage 工具。
 - **手动重连不再重复重启**：修复 `/imessage_reconnect` 和自动重启同时触发、侧车被拉起两次的问题。
 
 ### 细节

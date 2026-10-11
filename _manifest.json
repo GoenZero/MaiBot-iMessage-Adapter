@@ -43,7 +43,8 @@
     }
   },
   "capabilities": [
-    "send.text"
+    "send.text",
+    "chat.get_all_streams"
   ],
   "i18n": {
     "default_locale": "zh-CN",

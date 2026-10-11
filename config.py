@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Dict, Optional
+from typing import ClassVar, Dict, Literal, Optional
 
 from maibot_sdk import Field, PluginConfigBase
 
@@ -239,11 +239,71 @@ class SidecarBridgeConfig(PluginConfigBase):
     )
 
 
+class CapabilitiesConfig(PluginConfigBase):
+    """iMessage 能力开关。关闭的能力不会出现在给 AI 的说明和工具列表里。"""
+
+    __ui_label__: ClassVar[str] = "iMessage 能力"
+    __ui_order__: ClassVar[int] = 3
+
+    typing_indicator: bool = Field(
+        default=True,
+        description="AI 开始写回复时，对方手机上显示「正在输入」，发出后消失。AI 决定不回复时不会显示。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Typing indicator", label_ja="入力中表示", label_ko="입력 중 표시"),
+            "label": "输入中提示",
+            "order": 0,
+        },
+    )
+    read_receipts: bool = Field(
+        default=True,
+        description="开始处理对方消息时，自动给对方发「已读」。iMessage 会把整个对话一起标为已读。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Send read receipts", label_ja="既読を送信", label_ko="읽음 확인 보내기"),
+            "label": "自动发已读",
+            "order": 1,
+        },
+    )
+    reactions: bool = Field(
+        default=True,
+        description="允许 AI 给对方的消息点爱心、点赞等（iMessage Tapback）。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Tapback reactions", label_ja="Tapback リアクション", label_ko="Tapback 반응"),
+            "label": "点赞回应",
+            "order": 2,
+        },
+    )
+    reply_mode: Literal["auto", "always", "off"] = Field(
+        default="auto",
+        description="AI 的回复要不要以「引用对方某句话」的形式发出。auto：AI 自己决定；always：总是引用对方最新一句；off：从不引用。",
+        json_schema_extra={
+            "i18n": _schema_i18n(
+                label_en="Quote replies",
+                label_ja="引用返信",
+                label_ko="인용 답장",
+                hint_en="auto: the AI decides; always: always quote the latest message; off: never quote.",
+                hint_ja="auto：AI が判断／always：常に最新の発言を引用／off：引用しない。",
+                hint_ko="auto: AI가 결정 / always: 항상 최신 메시지 인용 / off: 인용 안 함.",
+            ),
+            "label": "引用回复",
+            "order": 3,
+        },
+    )
+    markdown: bool = Field(
+        default=True,
+        description="AI 回复里带 Markdown 格式（粗体、列表等）时，在 iMessage 里显示成对应样式；普通文字不受影响。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Render Markdown", label_ja="Markdown を表示", label_ko="Markdown 표시"),
+            "label": "Markdown 渲染",
+            "order": 4,
+        },
+    )
+
+
 class MediaConfig(PluginConfigBase):
     """收到图片时的处理方式。"""
 
     __ui_label__: ClassVar[str] = "图片处理"
-    __ui_order__: ClassVar[int] = 3
+    __ui_order__: ClassVar[int] = 4
 
     image_max_edge: int = Field(
         default=DEFAULT_IMAGE_MAX_EDGE,
@@ -270,4 +330,5 @@ class IMessageAdapterConfig(PluginConfigBase):
     plugin: IMessagePluginOptions = Field(default_factory=IMessagePluginOptions)
     photon: PhotonServerConfig = Field(default_factory=PhotonServerConfig)
     bridge: SidecarBridgeConfig = Field(default_factory=SidecarBridgeConfig)
+    capabilities: CapabilitiesConfig = Field(default_factory=CapabilitiesConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)

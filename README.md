@@ -59,6 +59,11 @@ MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.j
 | `[bridge]` | `max_attachment_size_mb` | 50 | 单个附件上限（MB），收发都适用 |
 | `[bridge]` | `handle_cache_size` | 500 | 记住最近多少条消息，供引用、点赞使用 |
 | `[bridge]` | `node_path` | "" | Node.js 路径，留空自动查找 |
+| `[capabilities]` | `typing_indicator` | true | AI 开始写回复时显示「正在输入」 |
+| `[capabilities]` | `read_receipts` | true | 开始处理对方消息时自动发「已读」 |
+| `[capabilities]` | `reactions` | true | 允许 AI 点爱心、点赞等（Tapback） |
+| `[capabilities]` | `reply_mode` | auto | 引用回复：auto = AI 自己决定，always = 总是引用对方最新一句，off = 不引用 |
+| `[capabilities]` | `markdown` | true | AI 回复里的 Markdown 格式显示成 iMessage 样式 |
 | `[media]` | `image_max_edge` | 2048 | 收到的图片长边超过多少像素就缩小，0 表示不缩小；HEIC 一律转成 JPEG |
 
 从 0.1.x 升级时，MaiBot 会自动把旧配置迁移到新结构，已填写的项目 ID、密钥等会保留；旧的「桥接端口」不再需要。

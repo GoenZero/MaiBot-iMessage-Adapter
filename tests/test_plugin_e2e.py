@@ -33,6 +33,8 @@ class FakeHost:
         if method == "host.update_message_gateway_state":
             return {"accepted": True}
         if method == "cap.call":
+            if payload["capability"] == "chat.get_all_streams":
+                return {"success": True, "streams": [{"session_id": "s-imessage", "user_id": "+1", "is_group_session": False}]}
             return {"success": True}
         return {}
 
@@ -141,5 +143,30 @@ def test_node_probe_reports_missing_exec_bit(tmp_path: Path) -> None:
         os.chmod(fake_node, 0o755)
         major, detail = await node_runtime.probe_node_version(str(fake_node))
         assert major == 24
+
+    asyncio.run(main())
+
+
+def test_planner_hook_distinguishes_imessage_chats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    tools = [
+        {"type": "function", "function": {"name": "reply", "parameters": {"type": "object", "properties": {"set_quote": {"type": "boolean"}}}}},
+        {"type": "function", "function": {"name": "imessage_react", "parameters": {"type": "object", "properties": {}}}},
+    ]
+    items = [{"item_type": "SystemMessageItem", "meta": {"item_id": "sys", "logical_turn_id": None, "timestamp": "2026-10-11T00:00:00"}, "parts": [{"type": "text", "text": "人设"}]}]
+
+    async def main() -> None:
+        await plugin.on_load()
+        imessage = await plugin.on_planner_request(items=items, tool_definitions=tools, session_id="s-imessage", item_schema_version=1)
+        assert imessage is not None
+        modified = imessage["modified_kwargs"]
+        assert [t["function"]["name"] for t in modified["tool_definitions"]] == ["reply", "imessage_react"]
+        assert "[iMessage 能力说明]" in modified["items"][1]["parts"][0]["text"]
+
+        qq = await plugin.on_planner_request(items=items, tool_definitions=tools, session_id="s-qq", item_schema_version=1)
+        assert qq is not None
+        assert [t["function"]["name"] for t in qq["modified_kwargs"]["tool_definitions"]] == ["reply"]
+        assert qq["modified_kwargs"]["items"] == items
+        await plugin.on_unload()
 
     asyncio.run(main())
