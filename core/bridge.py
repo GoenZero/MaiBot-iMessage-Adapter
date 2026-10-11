@@ -264,7 +264,10 @@ class SidecarSupervisor:
 
     @property
     def is_ready(self) -> bool:
-        return self.status.state == "ready" and self._process is not None
+        # 以侧车进程自己报告的 ready 为准：ready 之后紧接着到达的入站消息
+        # （例如重连后 Photon 补发的）在处理时就能发已读、输入中
+        process = self._process
+        return process is not None and process.ready.is_set() and process.fatal is None
 
     async def request(self, op: str, args: Optional[Dict[str, Any]] = None, timeout: float = 30.0) -> Dict[str, Any]:
         if not self.is_ready or self._process is None:
