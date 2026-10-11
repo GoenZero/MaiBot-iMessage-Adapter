@@ -113,3 +113,13 @@ def test_imessage_off_and_always_remove_set_quote():
         assert "set_quote" not in reply["properties"] and "set_quote" not in reply["required"]
         assert [t["function"]["name"] for t in result["tool_definitions"]] == ["reply", "wait"]
         assert [i["meta"]["item_id"] for i in result["items"]] == ["sys", "u1"]
+
+
+def test_tool_argument_coercion():
+    from imessage_adapter_under_test.tools import as_bool, as_string_list
+
+    assert as_bool("false") is False and as_bool("True") is True and as_bool(True) is True and as_bool(None) is False
+    assert as_string_list(["海边", " 爬山 ", "海边", ""]) == ["海边", "爬山"]
+    assert as_string_list('["a", "b"]') == ["a", "b"]
+    assert as_string_list("火锅、烧烤，日料") == ["火锅", "烧烤", "日料"]
+    assert as_string_list(None) == []

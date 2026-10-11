@@ -14,6 +14,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from maibot_sdk import Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+import json
+import re
+
 from .core.bridge import SidecarError
 from .core.capabilities import capability
 from .core.lru import LruDict
@@ -83,6 +86,29 @@ SHARE_CONTACT_DESCRIPTION = (
     "用 iMessage 的「共享名字与照片」把你自己的名字和头像发给对方，对方手机上会提示是否保存。"
     "只在对方想要你的联系方式、问你是谁、或要你的名片时用；不要主动反复发。"
 )
+
+
+def as_bool(value: Any) -> bool:
+    """模型有时把布尔值写成字符串 "false"，不能直接当真值判断。"""
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return bool(value)
+
+
+def as_string_list(value: Any) -> List[str]:
+    """数组参数：正常是列表；模型偶尔传 JSON 字符串或用顿号、逗号分隔的一串。"""
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = re.split(r"[、,，/\n]+", text)
+        value = parsed if isinstance(parsed, list) else [parsed]
+    if not isinstance(value, list):
+        return []
+    items = [str(item).strip() for item in value if str(item).strip()]
+    # 去掉重复项，保留顺序
+    return list(dict.fromkeys(items))
 
 
 class IMessageToolsMixin:
@@ -160,7 +186,7 @@ class IMessageToolsMixin:
         if kind not in TAPBACK_NAMES:
             return {"success": False, "error": f"kind 只能是 {', '.join(TAPBACK_NAMES)}"}
         key = f"{msg_id}|{kind}"
-        if remove:
+        if as_bool(remove):
             reaction_id = self._my_reactions.get(key)
             if reaction_id is None:
                 return {"success": False, "error": f"没找到你给这条消息点过的「{TAPBACK_NAMES[kind]}」（可能适配器重启过），这次没撤回成"}
@@ -308,9 +334,7 @@ class IMessageToolsMixin:
         _, refused = await self._tool_chat(stream_id, "polls")
         if refused:
             return refused
-        choices = [str(option).strip() for option in options or [] if str(option).strip()] if isinstance(options, list) else []
-        # 去掉重复选项，保留顺序
-        choices = list(dict.fromkeys(choices))
+        choices = as_string_list(options)
         if not title.strip():
             return {"success": False, "error": "投票要有问题（title）"}
         if not 2 <= len(choices) <= MAX_POLL_OPTIONS:
