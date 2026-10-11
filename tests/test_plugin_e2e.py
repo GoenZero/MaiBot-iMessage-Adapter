@@ -50,7 +50,7 @@ def make_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, emit: bool) 
     plugin._set_context(PluginContext("com.galeros.imessage_adapter", host.rpc, paths))
     plugin.set_plugin_config(
         {
-            "plugin": {"enabled": True, "config_version": "2.0.0"},
+            "plugin": {"enabled": True, "config_version": "2.1.0"},
             "photon": {"project_id": "pid", "project_secret": "TOPSECRET"},
             "bridge": {"retry_interval": 1.0},
         }
@@ -73,6 +73,12 @@ def sidecar_ops(tmp_path: Path) -> list[dict[str, Any]]:
     import json
 
     return [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+
+
+async def push_config(plugin: Any, data: dict[str, Any]) -> None:
+    """按 MaiBot 的顺序推送配置：先把新配置注入插件，再调用 on_config_update。"""
+    plugin.set_plugin_config(copy.deepcopy(data))
+    await plugin.on_config_update("self", data, "")
 
 
 async def wait_for(predicate, timeout: float = 10.0) -> None:
@@ -117,7 +123,7 @@ def test_inbound_and_outbound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 def test_disabled_plugin_stays_idle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
-    plugin.set_plugin_config({"plugin": {"enabled": False, "config_version": "2.0.0"}, "photon": {"project_id": "p", "project_secret": "s"}})
+    plugin.set_plugin_config({"plugin": {"enabled": False, "config_version": "2.1.0"}, "photon": {"project_id": "p", "project_secret": "s"}})
 
     async def main() -> None:
         await plugin.on_load()
@@ -356,14 +362,54 @@ def test_capability_toggle_does_not_restart_sidecar(tmp_path: Path, monkeypatch:
         data = copy.deepcopy(plugin.get_plugin_config_data())
         data["capabilities"]["read_receipts"] = False
         data["capabilities"]["reply_mode"] = "off"
-        await plugin.on_config_update("self", data, "")
+        await push_config(plugin, data)
         assert plugin._supervisor is supervisor and supervisor.status.pid == pid  # 没重启
         assert plugin.config.capabilities.read_receipts is False  # 但新配置已生效
 
         data = copy.deepcopy(plugin.get_plugin_config_data())
         data["capabilities"]["read_text_files"] = False  # 这一项由侧车决定，需要重启
-        await plugin.on_config_update("self", data, "")
+        await push_config(plugin, data)
         assert plugin._supervisor is not supervisor
+        await plugin.on_unload()
+
+    asyncio.run(main())
+
+
+def test_bot_number_change_is_reported_without_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        supervisor = plugin._supervisor
+        before = len(host.of("host.update_message_gateway_state"))
+
+        data = copy.deepcopy(plugin.get_plugin_config_data())
+        data["photon"]["bot_number"] = "+1 415 555 0100"
+        await push_config(plugin, data)
+        assert plugin._supervisor is supervisor  # 没重启
+        states = host.of("host.update_message_gateway_state")[before:]
+        assert [s["account_id"] for s in states if s["ready"]] == ["+14155550100"]
+
+        # 再推一次同样的配置，不重复上报
+        await push_config(plugin, copy.deepcopy(data))
+        assert len(host.of("host.update_message_gateway_state")) == before + 1
+        await plugin.on_unload()
+
+    asyncio.run(main())
+
+
+def test_photon_credential_change_restarts_sidecar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        supervisor = plugin._supervisor
+        data = copy.deepcopy(plugin.get_plugin_config_data())
+        data["photon"]["project_secret"] = "NEWSECRET"
+        await push_config(plugin, data)
+        assert plugin._supervisor is not None and plugin._supervisor is not supervisor
         await plugin.on_unload()
 
     asyncio.run(main())

@@ -33,6 +33,12 @@
 - 新增「读取文本文件」（默认开）：对方发来 .txt、.md、.json 等 256KB 以内的文本文件时，把内容（最多 6000 字）交给 AI。支持 UTF-8 和 GB18030 编码。PDF、Word 暂不支持。
 - 排查大文件慢：侧车记录附件下载用时；消息发出 30 秒后才到达时记一条警告；Python 记录超过 1 秒的图片处理用时。
 
+### 真机测试第二轮返修
+
+- 修复：在 WebUI 改配置后，「要不要重连」的判断一直失效。MaiBot 在通知插件之前就已经换上了新配置，插件拿新配置和新配置比，永远相同。结果是改 Photon 凭证、侧车参数不会重连，改「Photon 号码」也不会重新上报。现在改为和侧车启动时记下的配置比较。
+- 改「Photon 号码」不再重启侧车，立即向 MaiBot 重新上报；日志会写「已向 MaiBot 重新上报机器人号码」。
+- 配置结构版本升到 2.1.0。MaiBot 只在版本升高时把新增的设置项（Photon 号码、iMessage 能力、图片处理）写回已有的 config.toml，升级后文件里就能看到这些项。
+
 ### 细节
 
 - 修复（首次真机部署发现）：打包后的侧车连不上 Photon，报「`createGrpcClient` needs the optional peer dependencies」。原因是 @photon-ai/advanced-imessage 会检查 gRPC 相关的包能否在文件旁边找到，而打包后这些包已在 sidecar.mjs 里，旁边没有 node_modules。现在打包时去掉这个检查，修补失败会让打包直接报错。新增回归测试：把打包产物放在没有 node_modules 的目录里，实际创建 gRPC 客户端。
@@ -40,11 +46,11 @@
 - spectrum-ts 从 8.2.2 升级到 12.10.1，改为直接依赖 `@spectrum-ts/core` 和 `@spectrum-ts/imessage`，并锁定精确版本。理由：只有新版会转发对方已读回执，能识别语音类型，附件带传输状态；去掉了本地模式和需要现场编译的模块，打包后只含 86 个第三方包。
 - 类型检查用 TypeScript 6.0.3，打包用 esbuild 0.28.2，只在开发时用。TypeScript 7 不在 spectrum-ts 12.10.1 声明支持的范围（^5 或 ^6）内。
 - 已知：spectrum-ts 依赖的 OpenTelemetry 组件有一条中危公告（GHSA-8988-4f7v-96qf，W3C Baggage 解析时内存无上限）。上游暂无修复。侧车不接收外部 HTTP 请求，遥测默认关闭，不受影响。
-- 配置结构版本升到 2.0.0：去掉「桥接端口」，新增「消息缓存条数」和「Node.js 路径」。升级时 MaiBot 会自动迁移，已填写的值保留。
+- 配置结构版本升到 2.1.0（原先为 1.x）：去掉「桥接端口」，新增「消息缓存条数」「Node.js 路径」「Photon 号码」以及「iMessage 能力」「图片处理」两页。升级时 MaiBot 会自动迁移，已填写的值保留。
 - 侧车只会把真正的图片当成图片；PDF、视频等文件改成文字说明，不会再被当成图片送去识图。
 - 图片格式按文件头识别，不再一律当成 PNG 发送。
 - `/imessage_status` 显示版本、连续运行时长、累计重启次数、下次重连时间和最近一次错误。
 - 侧车日志中的 Project Secret 会被遮蔽。
 - 删除 `debug.py` 调试发送脚本，以及不再需要的 Python 依赖 websockets、tomlkit。
 - 插件声明需要 maibot-plugin-sdk 2.10.0 或以上。
-- 新增自动测试：侧车 31 项（`cd sidecar && npm run check`），Python 52 项（`python -m pytest tests`）。
+- 新增自动测试：侧车 31 项（`cd sidecar && npm run check`），Python 54 项（`python -m pytest tests`）。

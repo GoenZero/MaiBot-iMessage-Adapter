@@ -93,6 +93,9 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         # 侧车进程在，但 SDK 与 Photon 的消息流断了、正在自动重连时，记下开始时间
         self._link_down_since: Optional[float] = None
         self._last_outage: str = ""
+        # 侧车启动时的连接相关配置，以及最近一次上报给 MaiBot 的机器人号码
+        self._active_settings: Optional[Dict[str, Any]] = None
+        self._reported_account: Optional[str] = None
 
     """═══════════════════════════════════════════════
     生命周期
@@ -109,23 +112,30 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         if scope != "self":
             return
         self.ctx.logger.info("iMessage 适配器收到配置更新，正在应用…")
-        before = self._connection_settings()
+        # 注意：MaiBot 在调用这里之前就已经把新配置注入插件了，所以不能拿「注入前」做对比，
+        # 只能和侧车启动时记下的配置（_active_settings）比较
         self.set_plugin_config(config_data)
         if version:
             self.ctx.logger.debug("iMessage 适配器配置版本: %s", version)
-        if self._supervisor is not None and self._connection_settings() == before:
-            # 只改了能力开关、图片处理等：立即生效，不必重启侧车
-            self.ctx.logger.info("iMessage 适配器配置已生效（无需重连）")
+        if self._supervisor is None or self._connection_settings() != self._active_settings:
+            await self._restart_connection_if_needed()
             return
-        await self._restart_connection_if_needed()
+        # 只改了能力开关、图片处理、机器人号码等：立即生效，不必重启侧车
+        if self._bot_account() != self._reported_account and self._supervisor.is_ready:
+            await self._on_ready_change(True)
+            self.ctx.logger.info("已向 MaiBot 重新上报机器人号码：%s", self._bot_account() or "（已清空）")
+        self.ctx.logger.info("iMessage 适配器配置已生效（无需重连）")
 
     def _connection_settings(self) -> Dict[str, Any]:
         """会影响侧车进程的配置；只有这些变了才需要重启侧车。"""
         config = copy.deepcopy(self.get_plugin_config_data())
         capabilities = config.get("capabilities", {}) if isinstance(config.get("capabilities"), dict) else {}
+        photon = config.get("photon") if isinstance(config.get("photon"), dict) else {}
+        # 机器人号码只用于向 MaiBot 上报，改它不需要重启侧车
+        photon.pop("bot_number", None)
         return {
             "enabled": self.config.plugin.enabled,
-            "photon": config.get("photon"),
+            "photon": photon,
             "bridge": config.get("bridge"),
             # 读取文本文件由侧车决定是否下载
             "read_text_files": capabilities.get("read_text_files"),
@@ -141,6 +151,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
 
     async def _restart_connection_if_needed(self) -> None:
         await self._stop_connection()
+        self._active_settings = self._connection_settings()
         if not self.config.plugin.should_connect():
             self.ctx.logger.info("iMessage 适配器保持空闲，因为插件未启用")
             return
@@ -203,6 +214,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         self._link_down_since = None
         if ready:
             # 带上机器人账号：MaiBot 会把它记为本平台的机器人身份，不需要再手动配置备用账号
+            self._reported_account = self._bot_account()
             await self.ctx.gateway.update_state(
                 GATEWAY_NAME,
                 ready=True,
