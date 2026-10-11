@@ -34,4 +34,4 @@
 - 侧车日志中的 Project Secret 会被遮蔽。
 - 删除 `debug.py` 调试发送脚本，以及不再需要的 Python 依赖 websockets、tomlkit。
 - 插件声明需要 maibot-plugin-sdk 2.10.0 或以上。
-- 新增自动测试：侧车 27 项（`cd sidecar && npm run check`），Python 29 项（`python -m pytest tests`）。
+- 新增自动测试：侧车 27 项（`cd sidecar && npm run check`），Python 46 项（`python -m pytest tests`）。
