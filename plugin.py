@@ -75,6 +75,9 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         self._sessions = SessionDirectory(self._fetch_imessage_streams)
         self._background: set[asyncio.Task[Any]] = set()
         self._typing: Optional[TypingController] = None
+        # 每个对话里对方最新一条消息的编号，以及我们最近一次引用过的编号（「总是引用」档用）
+        self._last_inbound: Dict[str, str] = {}
+        self._last_quoted: Dict[str, str] = {}
 
     """═══════════════════════════════════════════════
     生命周期
@@ -254,6 +257,8 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         if not accepted:
             self.ctx.logger.debug("MaiBot 未接收入站消息：%s", message_id)
             return
+        if chat_id and message_id:
+            self._last_inbound[chat_id] = message_id
         if self.config.capabilities.read_receipts and chat_id and message_id:
             self._spawn(self._mark_read(chat_id, message_id))
 
@@ -325,9 +330,10 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         if not plan.parts:
             return {"success": False, "error": "没有可发送的内容"}
 
+        reply_to = self._choose_reply_target(chat_id, plan.reply_to)
         args: Dict[str, Any] = {"chat_id": chat_id, "parts": plan.parts}
-        if plan.reply_to:
-            args["reply_to"] = plan.reply_to
+        if reply_to:
+            args["reply_to"] = reply_to
         try:
             result = await supervisor.request("send", args, timeout=SEND_TIMEOUT)
         except SidecarError as exc:
@@ -339,10 +345,29 @@ class IMessageAdapterPlugin(MaiBotPlugin):
             if self._typing is not None:
                 self._spawn(self._typing.finish(chat_id))
 
+        if reply_to and result.get("quoted"):
+            self._last_quoted[chat_id] = reply_to
         message_ids = [str(x) for x in result.get("message_ids", []) if x]
         if result.get("partial"):
             self.ctx.logger.warning("消息只发出了一部分：%s", message_ids)
         return {"success": True, "external_message_id": message_ids[0] if message_ids else None}
+
+    def _choose_reply_target(self, chat_id: str, requested: Optional[str]) -> Optional[str]:
+        """按引用档位决定这条回复引用哪条消息。
+
+        - auto：照 MaiBot 给的（AI 在 reply 工具里明确选了 set_quote 才会有）
+        - always：MaiBot 没给时，引用对方最新一条；同一条只引用一次，避免分段回复每段都引用
+        - off：一律不引用
+        """
+        mode = self.config.capabilities.reply_mode
+        if mode == "off":
+            return None
+        if mode == "always" and not requested:
+            latest = self._last_inbound.get(chat_id)
+            if latest and self._last_quoted.get(chat_id) != latest:
+                return latest
+            return None
+        return requested
 
     """═══════════════════════════════════════════════
     AI 工具

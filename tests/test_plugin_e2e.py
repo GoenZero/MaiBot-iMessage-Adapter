@@ -253,3 +253,44 @@ def test_typing_indicator_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     ops = [(op["op"], op["args"].get("state")) for op in sidecar_ops(tmp_path) if op["op"] in ("typing", "send")]
     assert ops == [("typing", "start"), ("send", None), ("typing", "stop")]
     assert [op["args"]["chat_id"] for op in sidecar_ops(tmp_path) if op["op"] == "typing"] == ["+1", "+1"]
+
+
+def _reply_mode_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> list[dict[str, Any]]:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=True)
+    data = plugin.get_plugin_config_data()
+    data["capabilities"]["reply_mode"] = mode
+    plugin.set_plugin_config(data)
+
+    def outbound(with_reply: bool) -> dict[str, Any]:
+        segments: list[dict[str, Any]] = [{"type": "text", "data": "好"}]
+        if with_reply:
+            segments.insert(0, {"type": "reply", "data": {"target_message_id": "m1"}})
+        return {"message_info": {"additional_config": {"platform_io_target_user_id": "+1"}}, "raw_message": segments}
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: len(host.of("host.route_message")) == 3)
+        assert (await plugin.send_to_imessage(outbound(True)))["success"]
+        assert (await plugin.send_to_imessage(outbound(False)))["success"]
+        assert (await plugin.send_to_imessage(outbound(False)))["success"]
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    return [op["args"] for op in sidecar_ops(tmp_path) if op["op"] == "send"]
+
+
+def test_reply_mode_auto(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sends = _reply_mode_run(tmp_path, monkeypatch, "auto")
+    assert [s.get("reply_to") for s in sends] == ["m1", None, None]
+    assert sends[0]["chat_id"] == "any;-;+1"  # 用入站时记下的对话编号
+
+
+def test_reply_mode_always(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sends = _reply_mode_run(tmp_path, monkeypatch, "always")
+    # 第一条按 MaiBot 指定的；第二条自动引用对方最新一条（m3）；第三条不再重复引用 m3
+    assert [s.get("reply_to") for s in sends] == ["m1", "m3", None]
+
+
+def test_reply_mode_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sends = _reply_mode_run(tmp_path, monkeypatch, "off")
+    assert [s.get("reply_to") for s in sends] == [None, None, None]
