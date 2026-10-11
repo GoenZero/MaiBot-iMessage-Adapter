@@ -45,7 +45,7 @@ def _caps(config: Any) -> Any:
 def _reply_note(config: Any) -> str:
     mode = _caps(config).reply_mode
     if mode == "auto":
-        return "引用回复由你决定：想针对对方某一句话回应时，在 reply 工具里把 set_quote 设为 true，不要每句都引用。"
+        return "要针对对方某句话回应时，reply 工具的 set_quote 填 true，平时填 false。"
     if mode == "always":
         return "你的回复会自动以引用对方最新一句话的形式发出，你不需要设置 set_quote。"
     return ""
@@ -93,7 +93,16 @@ REGISTRY: Sequence[Capability] = (
         plan="free",
         kind="auto",
         is_enabled=lambda c: _caps(c).markdown,
-        ai_note=lambda c: "可以用 **粗体**、*斜体*、列表等 Markdown 格式，iMessage 会显示成对应样式；聊天时少用。",
+        ai_note=lambda c: "可用 **粗体**、列表等 Markdown，iMessage 会显示样式；闲聊少用。",
+    ),
+    Capability(
+        key="text_files",
+        title="读取文本文件",
+        photon_call="attachment.read",
+        plan="free",
+        kind="auto",
+        is_enabled=lambda c: _caps(c).read_text_files,
+        ai_note=lambda c: "对方发的 .txt、.md 等文本文件会附上内容。",
     ),
     Capability(
         key="inbound_media",
@@ -103,8 +112,8 @@ REGISTRY: Sequence[Capability] = (
         kind="inbound",
         is_enabled=lambda c: True,
         ai_note=lambda c: (
-            "对方消息带 quote=\"编号\" 表示对方引用了那条消息回复你。"
-            "对方发来的语音、文件等你打不开的内容，会以方括号说明的形式出现。"
+            "对方消息带 quote=\"编号\" 表示引用了那条消息。"
+            "你打不开的语音、文件等会以方括号说明出现。"
         ),
     ),
 )

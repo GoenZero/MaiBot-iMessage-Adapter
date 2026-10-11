@@ -14,6 +14,7 @@ from typing import Optional, Tuple
 import base64
 import io
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +89,12 @@ def load_image_file(path: str, mime: str, *, max_edge: int = 2048) -> Tuple[Opti
         file.unlink(missing_ok=True)
     if not data:
         return None, "图片是空的"
+    started = time.monotonic()
     try:
         prepared, out_mime = prepare_image(data, mime, max_edge)
+        seconds = time.monotonic() - started
+        if seconds >= 1.0:
+            logger.info("图片处理用时 %.1f 秒（%s，%.1fMB → %.1fMB）", seconds, mime, len(data) / 1048576, len(prepared) / 1048576)
     except Exception as exc:
         logger.warning("处理图片失败（%s，%d 字节）：%s", mime, len(data), exc)
         if is_heif(data, mime):

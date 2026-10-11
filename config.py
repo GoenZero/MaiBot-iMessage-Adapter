@@ -312,6 +312,15 @@ class CapabilitiesConfig(PluginConfigBase):
             "order": 3,
         },
     )
+    read_text_files: bool = Field(
+        default=True,
+        description="对方发来 .txt、.md、.json 等文本文件（256KB 以内）时，把文件内容交给 AI（最多 6000 字）。关闭则只告诉 AI 文件名。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Read text files", label_ja="テキストファイルを読む", label_ko="텍스트 파일 읽기"),
+            "label": "读取文本文件",
+            "order": 5,
+        },
+    )
     markdown: bool = Field(
         default=True,
         description="AI 回复里带 Markdown 格式（粗体、列表等）时，在 iMessage 里显示成对应样式；普通文字不受影响。",

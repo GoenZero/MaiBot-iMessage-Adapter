@@ -63,3 +63,25 @@ test("附件写入临时文件，超限时中止并清理", async () => {
   await assert.rejects(saveToTempFile(streamOf([new Uint8Array(8), new Uint8Array(8)]), dir, ".jpg", 10), { code: "TOO_LARGE" });
   assert.deepEqual(await readdir(dir), [saved.path.split("/").pop()]);
 });
+
+test("SDK 日志整理成一行，并识别消息流中断与恢复", async () => {
+  const { summarizeArgs, trackLinkState } = await import("./sdklog.ts");
+  const error = Object.assign(new Error("No connection established.\nLast error: x"), { cause: new Error("ENETUNREACH 1.2.3.4:443") });
+  const attrs = { "spectrum.stream.label": "imessage.messages:shared", "spectrum.stream.attempt": 2, "spectrum.stream.id": "abc" };
+  const line = summarizeArgs(["[spectrum.stream]", "WARN", "stream interrupted; reconnecting", attrs, error]);
+  assert.equal(line.includes("\n"), false);
+  assert.match(line, /label=imessage.messages:shared, attempt=2/);
+  assert.match(line, /Error: No connection established\.（原因：ENETUNREACH 1\.2\.3\.4:443）/);
+
+  const events: object[] = [];
+  const push = (data: object) => events.push(data);
+  const down = (label: string) => ["[spectrum.stream]", "WARN", "stream interrupted; reconnecting", { "spectrum.stream.label": label }];
+  const up = (label: string) => ["[spectrum.stream]", "INFO", "stream recovered", { "spectrum.stream.label": label }];
+  assert.equal(trackLinkState(down("a"), push), "interrupted");
+  assert.equal(trackLinkState(down("a"), push), "repeat"); // 重试日志不再输出
+  assert.equal(trackLinkState(down("b"), push), "interrupted");
+  assert.equal(trackLinkState(up("a"), push), "recovered");
+  assert.equal(events.length, 1); // b 还没恢复
+  trackLinkState(up("b"), push);
+  assert.deepEqual(events.map((e) => (e as { state: string }).state), ["reconnecting", "ok"]);
+});

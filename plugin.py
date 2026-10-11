@@ -17,6 +17,7 @@ from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder, ToolParameterInfo
 
 import asyncio
 import contextlib
+import copy
 import functools
 import os
 import shutil
@@ -89,6 +90,9 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         # 每个对话里对方最新一条消息的编号，以及我们最近一次引用过的编号（「总是引用」档用）
         self._last_inbound: Dict[str, str] = {}
         self._last_quoted: Dict[str, str] = {}
+        # 侧车进程在，但 SDK 与 Photon 的消息流断了、正在自动重连时，记下开始时间
+        self._link_down_since: Optional[float] = None
+        self._last_outage: str = ""
 
     """═══════════════════════════════════════════════
     生命周期
@@ -105,10 +109,27 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         if scope != "self":
             return
         self.ctx.logger.info("iMessage 适配器收到配置更新，正在应用…")
+        before = self._connection_settings()
         self.set_plugin_config(config_data)
         if version:
             self.ctx.logger.debug("iMessage 适配器配置版本: %s", version)
+        if self._supervisor is not None and self._connection_settings() == before:
+            # 只改了能力开关、图片处理等：立即生效，不必重启侧车
+            self.ctx.logger.info("iMessage 适配器配置已生效（无需重连）")
+            return
         await self._restart_connection_if_needed()
+
+    def _connection_settings(self) -> Dict[str, Any]:
+        """会影响侧车进程的配置；只有这些变了才需要重启侧车。"""
+        config = copy.deepcopy(self.get_plugin_config_data())
+        capabilities = config.get("capabilities", {}) if isinstance(config.get("capabilities"), dict) else {}
+        return {
+            "enabled": self.config.plugin.enabled,
+            "photon": config.get("photon"),
+            "bridge": config.get("bridge"),
+            # 读取文本文件由侧车决定是否下载
+            "read_text_files": capabilities.get("read_text_files"),
+        }
 
     """═══════════════════════════════════════════════
     连接管理
@@ -170,6 +191,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
             "MEDIA_DIR": str(self._media_dir),
             "MAX_ATTACHMENT_BYTES": str(self.config.bridge.max_attachment_size_mb * 1024 * 1024),
             "HANDLE_CACHE_SIZE": str(self.config.bridge.handle_cache_size),
+            "READ_TEXT_FILES": "1" if self.config.capabilities.read_text_files else "0",
         }
         return node, SIDECAR_SCRIPT, env
 
@@ -178,6 +200,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         return normalize_account(self.config.photon.bot_number)
 
     async def _on_ready_change(self, ready: bool) -> None:
+        self._link_down_since = None
         if ready:
             # 带上机器人账号：MaiBot 会把它记为本平台的机器人身份，不需要再手动配置备用账号
             await self.ctx.gateway.update_state(
@@ -257,6 +280,21 @@ class IMessageAdapterPlugin(MaiBotPlugin):
             self.ctx.logger.info("收到 iMessage 事件：%s", event_info.get("type"))
         elif event == "fatal":
             self._last_error = f"[{data.get('code')}] {data.get('message')}"
+        elif event == "link":
+            self._on_link_state(str(data.get("state", "")), str(data.get("detail", "")))
+
+    def _on_link_state(self, state: str, detail: str) -> None:
+        """SDK 与 Photon 之间的消息流中断 / 恢复（侧车进程本身没退出）。"""
+        if state == "reconnecting" and self._link_down_since is None:
+            self._link_down_since = time.time()
+            self._last_error = detail
+            self.ctx.logger.warning("与 Photon 的连接中断，正在自动重连（侧车无需重启）")
+        elif state == "ok" and self._link_down_since is not None:
+            seconds = int(time.time() - self._link_down_since)
+            started = time.strftime("%H:%M:%S", time.localtime(self._link_down_since))
+            self._last_outage = f"{started} 起中断约 {seconds} 秒，已自动恢复"
+            self._link_down_since = None
+            self.ctx.logger.info("与 Photon 的连接已恢复（中断约 %d 秒）", seconds)
 
     async def _handle_inbound_message(self, data: Dict[str, Any]) -> None:
         sender_id = str(data.get("sender_id", ""))
@@ -305,6 +343,24 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         if chat_id:
             await typing.start(chat_id)
         return None
+
+    @HookHandler(
+        "send_service.before_send",
+        name="imessage_quote_policy",
+        description="引用回复设为「关闭」时，让 MaiBot 发送和记录 iMessage 消息时都不带引用",
+        mode=HookMode.BLOCKING,
+        timeout_ms=3000,
+        error_policy=ErrorPolicy.SKIP,
+    )
+    async def on_before_send(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """关闭档下把 set_reply 改成 False：消息不带引用，MaiBot 的聊天记录里也不会写成「引用了某句」，
+        AI 回头看历史时不会误以为自己引用过。"""
+        if self.config.capabilities.reply_mode != "off" or not kwargs.get("set_reply"):
+            return None
+        message = kwargs.get("message")
+        if not isinstance(message, dict) or str(message.get("platform", "")) != PLATFORM:
+            return None
+        return {"action": "continue", "modified_kwargs": {**kwargs, "set_reply": False}}
 
     async def _mark_read(self, chat_id: str, message_id: str) -> None:
         """自动发已读：失败只记日志。"""
@@ -450,7 +506,11 @@ class IMessageAdapterPlugin(MaiBotPlugin):
             lines.append("状态：⏹ 未运行（插件未启用或未填写 Photon 凭证）")
         else:
             status = supervisor.status
-            lines.append(f"状态：{_STATE_TEXT.get(status.state, status.state)}")
+            state_text = _STATE_TEXT.get(status.state, status.state)
+            if status.state == "ready" and self._link_down_since is not None:
+                since = time.strftime("%H:%M:%S", time.localtime(self._link_down_since))
+                state_text = f"🔁 与 Photon 的连接中断，正在自动重连（{since} 起）"
+            lines.append(f"状态：{state_text}")
             if status.pid:
                 lines.append(f"侧车 PID：{status.pid}")
             if status.ready_since:
@@ -461,6 +521,8 @@ class IMessageAdapterPlugin(MaiBotPlugin):
             lines.append(f"累计重启：{status.restarts} 次")
             if status.next_retry_at:
                 lines.append(f"下次重连：{max(0, int(status.next_retry_at - time.time()))} 秒后")
+            if self._last_outage:
+                lines.append(f"最近一次中断：{self._last_outage}")
             last_error = status.last_error or self._last_error
             if last_error:
                 lines.append(f"最近错误：{self._redact(last_error)[:200]}")

@@ -23,6 +23,16 @@
 - **上报机器人账号**：「Photon 云端」新增「Photon 号码」。填写后，适配器在连接成功时通过网关状态（`update_state` 的 `account_id`）把它上报给 MaiBot，MaiBot 会自动记为 iMessage 平台的机器人账号，不必再到「平台账号 → 备用账号」里手动添加。首次填写或更改后，这个 iMessage 对话会成为新的聊天流。
 - **手动重连不再重复重启**：修复 `/imessage_reconnect` 和自动重启同时触发、侧车被拉起两次的问题。
 
+### 真机测试第一轮返修
+
+- 修改能力开关、引用档位、图片处理等设置时，不再重启侧车，立即生效；只有改 Photon 凭证、侧车参数或「读取文本文件」时才重连。
+- 插件主动关闭侧车时，不再误报「[侧车] Photon 消息流意外结束」。
+- 「引用回复」关闭档：通过 send_service.before_send 钩子把 MaiBot 的 set_reply 改成 false。消息不带引用，MaiBot 的聊天记录也不会写成「引用了某句」，AI 不会再以为自己引用过。
+- 连接状态：SDK 与 Photon 的消息流断开、自动重连时（侧车进程本身不退出），`/imessage_status` 显示「🔁 与 Photon 的连接中断，正在自动重连」；恢复后显示「最近一次中断」的时间和时长，日志各记一条。
+- SDK 日志整理成一行一条，不再输出多行堆栈。断网期间同一条流的重试日志只记第一条，相同内容 60 秒内只记一次。gRPC 底层偶发的未捕获连接重置（ECONNRESET）改为警告，不再导致侧车崩溃。
+- 新增「读取文本文件」（默认开）：对方发来 .txt、.md、.json 等 256KB 以内的文本文件时，把内容（最多 6000 字）交给 AI。支持 UTF-8 和 GB18030 编码。PDF、Word 暂不支持。
+- 排查大文件慢：侧车记录附件下载用时；消息发出 30 秒后才到达时记一条警告；Python 记录超过 1 秒的图片处理用时。
+
 ### 细节
 
 - 修复（首次真机部署发现）：打包后的侧车连不上 Photon，报「`createGrpcClient` needs the optional peer dependencies」。原因是 @photon-ai/advanced-imessage 会检查 gRPC 相关的包能否在文件旁边找到，而打包后这些包已在 sidecar.mjs 里，旁边没有 node_modules。现在打包时去掉这个检查，修补失败会让打包直接报错。新增回归测试：把打包产物放在没有 node_modules 的目录里，实际创建 gRPC 客户端。
@@ -37,4 +47,4 @@
 - 侧车日志中的 Project Secret 会被遮蔽。
 - 删除 `debug.py` 调试发送脚本，以及不再需要的 Python 依赖 websockets、tomlkit。
 - 插件声明需要 maibot-plugin-sdk 2.10.0 或以上。
-- 新增自动测试：侧车 29 项（`cd sidecar && npm run check`），Python 46 项（`python -m pytest tests`）。
+- 新增自动测试：侧车 31 项（`cd sidecar && npm run check`），Python 52 项（`python -m pytest tests`）。

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import asyncio
+import copy
 import os
 import shutil
 
@@ -342,3 +343,61 @@ def test_normalize_account() -> None:
     assert plugin_module.normalize_account(" +86 138-0000-0000 ") == "+8613800000000"
     assert plugin_module.normalize_account("Bot@iCloud.com") == "bot@icloud.com"
     assert plugin_module.normalize_account("") == ""
+
+
+def test_capability_toggle_does_not_restart_sidecar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        supervisor = plugin._supervisor
+        pid = supervisor.status.pid
+        data = copy.deepcopy(plugin.get_plugin_config_data())
+        data["capabilities"]["read_receipts"] = False
+        data["capabilities"]["reply_mode"] = "off"
+        await plugin.on_config_update("self", data, "")
+        assert plugin._supervisor is supervisor and supervisor.status.pid == pid  # 没重启
+        assert plugin.config.capabilities.read_receipts is False  # 但新配置已生效
+
+        data = copy.deepcopy(plugin.get_plugin_config_data())
+        data["capabilities"]["read_text_files"] = False  # 这一项由侧车决定，需要重启
+        await plugin.on_config_update("self", data, "")
+        assert plugin._supervisor is not supervisor
+        await plugin.on_unload()
+
+    asyncio.run(main())
+
+
+def test_quote_off_hook_turns_off_set_reply(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    kwargs = {"message": {"platform": "imessage", "message_id": "x"}, "set_reply": True, "typing": False, "reply_message_id": "m1"}
+
+    assert asyncio.run(plugin.on_before_send(**kwargs)) is None  # auto 档不动
+    data = plugin.get_plugin_config_data()
+    data["capabilities"]["reply_mode"] = "off"
+    plugin.set_plugin_config(data)
+    result = asyncio.run(plugin.on_before_send(**kwargs))
+    assert result is not None and result["modified_kwargs"]["set_reply"] is False
+    assert result["modified_kwargs"]["reply_message_id"] == "m1"  # 其余参数原样保留
+    qq = {**kwargs, "message": {"platform": "qq"}}
+    assert asyncio.run(plugin.on_before_send(**qq)) is None  # 其他平台不动
+
+
+def test_link_state_shows_in_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        await wait_for(lambda: plugin._supervisor.status.state == "ready")
+        await plugin._on_sidecar_event("link", {"state": "reconnecting", "detail": "ENETUNREACH"})
+        await plugin.handle_status(stream_id="s1")
+        await plugin._on_sidecar_event("link", {"state": "ok"})
+        await plugin.handle_status(stream_id="s1")
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    texts = [p["args"]["text"] for p in host.of("cap.call") if p["capability"] == "send.text"]
+    assert "正在自动重连" in texts[0]
+    assert "✅ 已连接" in texts[1] and "最近一次中断" in texts[1] and "已自动恢复" in texts[1]

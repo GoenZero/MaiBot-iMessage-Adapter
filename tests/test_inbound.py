@@ -85,3 +85,24 @@ def test_non_image_parts_become_sentences():
 def test_never_empty():
     message = build_maibot_message(make([]), loader_ok)
     assert message["raw_message"] == [{"type": "text", "data": "[对方发了一条空白消息]"}]
+
+
+def test_text_file_content_goes_to_ai(tmp_path):
+    md = tmp_path / "in-1.md"
+    md.write_text("# 购物清单\n- 牛奶\n- 面包\n", encoding="utf-8")
+    gbk = tmp_path / "in-2.txt"
+    gbk.write_bytes("中文编码测试".encode("gb18030"))
+    big = tmp_path / "in-3.txt"
+    big.write_text("字" * 7000, encoding="utf-8")
+    parts = [
+        {"type": "text_file", "path": str(md), "mime": "text/markdown", "name": "清单.md", "size": 30},
+        {"type": "text_file", "path": str(gbk), "mime": "text/plain", "name": "a.txt", "size": 12},
+        {"type": "text_file", "path": str(big), "mime": "text/plain", "name": "长.txt", "size": 21000},
+        {"type": "file", "mime": "text/plain", "name": "超大.log", "size": 900000, "note": "text_too_large"},
+    ]
+    text = build_maibot_message(make(parts), loader_ok)["raw_message"][0]["data"]
+    assert "[对方发来一个文件：清单.md，内容如下]\n# 购物清单\n- 牛奶\n- 面包\n[文件内容结束]" in text
+    assert "中文编码测试" in text
+    assert "只显示了前 6000 个字" in text
+    assert "超大.log" in text and "文件太大，没有读取内容" in text
+    assert not md.exists() and not gbk.exists() and not big.exists()  # 临时文件读完即删

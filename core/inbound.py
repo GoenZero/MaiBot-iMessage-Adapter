@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 PLATFORM = "imessage"
+# 文本文件交给 AI 的最大字数，超出部分截掉
+MAX_TEXT_FILE_CHARS = 6000
 
 # 图片加载器：输入（临时文件路径, MIME），返回 (base64, 说明)；失败返回 (None, 原因)
 ImageLoader = Callable[[str, str], Tuple[Optional[str], str]]
@@ -38,6 +41,38 @@ def _human_size(size: Any) -> str:
     return f"{max(size / 1024, 0.1):.1f}KB"
 
 
+def read_text_file(path: str, max_chars: int = MAX_TEXT_FILE_CHARS) -> Tuple[Optional[str], bool]:
+    """读取侧车下载的文本文件并删除它，返回 (内容, 是否截断)；读不了返回 (None, False)。"""
+    file = Path(path)
+    try:
+        data = file.read_bytes()
+    except OSError:
+        return None, False
+    finally:
+        file.unlink(missing_ok=True)
+    for encoding in ("utf-8-sig", "gb18030"):
+        try:
+            text = data.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        text = data.decode("utf-8", errors="replace")
+    if "\x00" in text:
+        return None, False  # 实际是二进制文件
+    truncated = len(text) > max_chars
+    return (text[:max_chars] if truncated else text), truncated
+
+
+def describe_text_file(part: Dict[str, Any]) -> str:
+    content, truncated = read_text_file(str(part.get("path", "")))
+    name = part.get("name") or "未命名"
+    if content is None:
+        return f"[对方发来一个文件：{name}，但没能读取内容]"
+    tail = f"\n[文件较长，只显示了前 {MAX_TEXT_FILE_CHARS} 个字]" if truncated else ""
+    return f"[对方发来一个文件：{name}，内容如下]\n{content.strip()}{tail}\n[文件内容结束]"
+
+
 def describe_part(part: Dict[str, Any]) -> str:
     """把非图片片段变成给 AI 看的一句话。"""
     kind = part.get("type")
@@ -46,13 +81,17 @@ def describe_part(part: Dict[str, Any]) -> str:
         text = f"[对方发来一个文件：{part.get('name') or '未命名'}"
         text += f"（{details}）" if details else ""
         note = part.get("note")
-        if note == "too_large":
+        if note == "text_too_large":
+            text += "，文件太大，没有读取内容"
+        elif note == "too_large":
             text += "，文件太大，没有接收"
         elif note == "download_failed":
             text += "，下载失败，没能打开"
         else:
             text += "，你暂时打不开这类文件"
         return text + "]"
+    if kind == "text_file":
+        return describe_text_file(part)
     if kind == "voice":
         duration = part.get("duration")
         length = f"，约 {round(duration)} 秒" if isinstance(duration, (int, float)) and duration > 0 else ""

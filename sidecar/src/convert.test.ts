@@ -190,3 +190,26 @@ test("组合消息的每一项都能被引用或点赞", () => {
   const ids = collectMessages(msg("g", group)).map((m) => m.id);
   assert.deepEqual(ids, ["g", "p:0/g", "p:1/g"]);
 });
+
+test("文本文件（.md）下载后交出路径；太大的只给文件说明", async () => {
+  const saved: string[] = [];
+  const opts = options({
+    maxTextFileBytes: 1000,
+    saveTextFile: async (content) => {
+      saved.push(String(content.name));
+      return { path: `/tmp/${String(content.name)}`, size: 12 };
+    },
+  });
+  const md = await convertInbound(msg("t1", image("笔记.md", "application/octet-stream", 12)), opts);
+  assert.ok(md.kind === "message");
+  assert.deepEqual(md.data.parts, [{ type: "text_file", path: "/tmp/笔记.md", mime: "application/octet-stream", name: "笔记.md", size: 12 }]);
+
+  const big = await convertInbound(msg("t2", image("大日志.log", "text/plain", 5000)), opts);
+  assert.ok(big.kind === "message");
+  assert.deepEqual(big.data.parts, [{ type: "file", mime: "text/plain", name: "大日志.log", size: 5000, note: "text_too_large" }]);
+
+  const pdf = await convertInbound(msg("t3", image("a.pdf", "application/pdf", 10)), opts);
+  assert.ok(pdf.kind === "message");
+  assert.equal(pdf.data.parts[0]?.type, "file");
+  assert.deepEqual(saved, ["笔记.md"]);
+});

@@ -10,7 +10,7 @@
  * 退出码：0 正常退出；1 运行中出错（Python 会自动重启）；2 Photon 认证失败（不重启）。
  */
 // stdio 必须最先导入：它负责把所有杂项输出从协议通道里挪走
-import { log, registerSecret, writeFrame } from "./stdio.ts";
+import { log, logThrottled, registerSecret, writeFrame } from "./stdio.ts";
 
 import { Spectrum } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
@@ -53,6 +53,17 @@ const mediaDir = envString("MEDIA_DIR");
 const maxAttachmentBytes = envInt("MAX_ATTACHMENT_BYTES", 50 * 1024 * 1024);
 const handleCacheSize = envInt("HANDLE_CACHE_SIZE", 500);
 
+// gRPC 底层偶尔会在连接被重置时抛出没人接住的 socket 错误（例如经 HTTP 代理时）。
+// 这类错误由 SDK 的重连逻辑兜底，记一条警告即可；其他未知错误仍按崩溃处理，交给 Python 重启。
+process.on("uncaughtException", (error: NodeJS.ErrnoException) => {
+  if (error?.code === "ECONNRESET" || error?.code === "EPIPE" || error?.code === "ETIMEDOUT") {
+    logThrottled("WARN", `网络连接被重置（${error.code}），SDK 会自动重连`);
+    return;
+  }
+  log("ERROR", `侧车未捕获的错误：${String(error?.stack ?? error)}`);
+  process.exit(1);
+});
+
 process.on("unhandledRejection", (reason) => {
   log("ERROR", `未处理的异步错误：${String((reason as Error)?.stack ?? reason)}`);
 });
@@ -71,7 +82,8 @@ try {
     projectId,
     projectSecret,
     providers: [imessage.config()],
-    options: { logLevel: "warn" },
+    // info 级日志只用于判断「消息流中断 / 恢复」，stdio.ts 不会把它们输出
+    options: { logLevel: "info" },
   });
 } catch (error) {
   const info = classifyError(error);
@@ -111,11 +123,13 @@ const actions = new Actions({
 let stopping = false;
 
 async function shutdown(code: number): Promise<never> {
-  if (!stopping) {
-    stopping = true;
-    log("INFO", "侧车正在关闭");
-    await Promise.race([app.stop().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 3000))]);
+  if (stopping) {
+    // 已经在关闭（例如 Python 要求退出时，消息流随之结束）：交给第一次调用去退出
+    return new Promise<never>(() => undefined);
   }
+  stopping = true;
+  log("INFO", "侧车正在关闭");
+  await Promise.race([app.stop().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 3000))]);
   process.exit(code);
 }
 
@@ -171,17 +185,35 @@ log("INFO", `已连接 Photon（spectrum-ts ${SPECTRUM_VERSION}，Node ${process
 // 3. 接收 iMessage 消息
 // ---------------------------------------------------------------------------
 
+const MAX_TEXT_FILE_BYTES = envInt("MAX_TEXT_FILE_BYTES", 256 * 1024);
+
+/** 下载附件并记录耗时（用于排查大文件接收慢的问题）。 */
+async function downloadWithTiming(content: ContentLike, limit: number): Promise<{ path: string; size: number }> {
+  const started = Date.now();
+  const saved = await saveToTempFile(
+    content as unknown as StreamSource,
+    mediaDir,
+    safeExtension(String(content.name ?? ""), String(content.mimeType ?? "")),
+    limit,
+  );
+  const seconds = (Date.now() - started) / 1000;
+  log(
+    seconds >= 10 ? "WARN" : "INFO",
+    `附件下载完成：${String(content.name ?? "")}（${(saved.size / 1024 / 1024).toFixed(1)}MB），用时 ${seconds.toFixed(1)} 秒`,
+  );
+  return saved;
+}
+
 const convertOptions: ConvertOptions = {
   maxImageBytes: maxAttachmentBytes,
+  maxTextFileBytes: MAX_TEXT_FILE_BYTES,
   warn: (message: string) => log("WARN", message),
-  saveImage: (content: ContentLike) =>
-    saveToTempFile(
-      content as unknown as StreamSource,
-      mediaDir,
-      safeExtension(String(content.name ?? ""), String(content.mimeType ?? "")),
-      maxAttachmentBytes,
-    ),
+  saveImage: (content: ContentLike) => downloadWithTiming(content, maxAttachmentBytes),
 };
+// 读取文本文件可在 WebUI 关闭（READ_TEXT_FILES=0）
+if (process.env.READ_TEXT_FILES !== "0") {
+  convertOptions.saveTextFile = (content: ContentLike) => downloadWithTiming(content, MAX_TEXT_FILE_BYTES);
+}
 
 try {
   for await (const [space, rawMessage] of app.messages) {
@@ -210,13 +242,19 @@ try {
         },
       };
     }
-    if (result.kind === "message") emit("message", result.data);
+    if (result.kind === "message") {
+      const delay = (Date.now() - result.data.timestamp) / 1000;
+      if (delay >= 30) log("WARN", `消息 ${message.id} 在发出 ${delay.toFixed(0)} 秒后才交给适配器（含附件下载时间）`);
+      emit("message", result.data);
+    }
     else if (result.kind === "control") emit("control", result.data);
   }
-  log("ERROR", "Photon 消息流意外结束");
+  if (!stopping) log("ERROR", "Photon 消息流意外结束");
 } catch (error) {
-  const info = classifyError(error);
-  log("ERROR", `Photon 消息流出错 [${info.code}]：${info.message}`);
-  emit("fatal", info);
+  if (!stopping) {
+    const info = classifyError(error);
+    log("ERROR", `Photon 消息流出错 [${info.code}]：${info.message}`);
+    emit("fatal", info);
+  }
 }
 await shutdown(1);

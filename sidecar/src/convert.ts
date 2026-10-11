@@ -29,6 +29,7 @@ export type InboundPart =
   | { type: "text"; text: string }
   | { type: "image"; path: string; mime: string; name: string; size: number }
   | { type: "file"; mime: string; name: string; size?: number; note?: string }
+  | { type: "text_file"; path: string; mime: string; name: string; size: number }
   | { type: "voice"; id?: string; mime: string; duration?: number; size?: number }
   | { type: "contact"; name?: string; phones: string[]; emails: string[]; org?: string; urls: string[] }
   | { type: "link"; url: string }
@@ -77,8 +78,25 @@ export type SaveImage = (content: ContentLike) => Promise<{ path: string; size: 
 export interface ConvertOptions {
   saveImage: SaveImage;
   maxImageBytes: number;
+  /** 下载文本类文件（.md、.txt 等）的回调；不提供则只告诉 AI 文件名。 */
+  saveTextFile?: SaveImage;
+  maxTextFileBytes?: number;
   /** 记录警告日志（下载失败等），不影响转换结果。 */
   warn: (message: string) => void;
+}
+
+const TEXT_EXTENSIONS = new Set([
+  ".txt", ".md", ".markdown", ".json", ".csv", ".tsv", ".log", ".yaml", ".yml", ".toml", ".ini", ".xml",
+  ".html", ".htm", ".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".go", ".rs", ".sh", ".sql", ".srt",
+]);
+const TEXT_MIMES = new Set(["application/json", "application/xml", "application/x-yaml", "application/toml", "application/x-sh"]);
+
+/** 是否是可以直接当文字读的文件。 */
+export function isTextLike(mime: string, name: string): boolean {
+  if (mime.startsWith("text/") && !mime.includes("vcard") && !mime.includes("directory")) return true;
+  if (TEXT_MIMES.has(mime)) return true;
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 && TEXT_EXTENSIONS.has(name.slice(dot).toLowerCase());
 }
 
 /** 这些内容类型不是用户「说的话」，而是事件。 */
@@ -210,9 +228,24 @@ async function convertContent(
       const name = String(content.name ?? "attachment");
       const size = num(content.size);
       if (!mime.startsWith("image/")) {
+        const textLimit = options.maxTextFileBytes ?? 0;
+        if (options.saveTextFile && isTextLike(mime, name) && (size === undefined || size <= textLimit)) {
+          // 文本类文件下载下来，由 Python 把内容交给 AI
+          try {
+            const saved = await options.saveTextFile(content);
+            return { parts: [{ type: "text_file", path: saved.path, mime, name, size: saved.size }] };
+          } catch (error) {
+            options.warn(`文本文件下载失败（${name}）：${String((error as Error).message ?? error)}`);
+            const code = (error as { code?: unknown }).code === "TOO_LARGE" ? "too_large" : "download_failed";
+            const part: InboundPart = { type: "file", mime, name, note: code };
+            if (size !== undefined) part.size = size;
+            return { parts: [part] };
+          }
+        }
         // MaiBot 读不了 PDF、视频等文件，只告诉 AI 收到了什么
         const part: InboundPart = { type: "file", mime, name };
         if (size !== undefined) part.size = size;
+        if (isTextLike(mime, name) && size !== undefined && size > textLimit) part.note = "text_too_large";
         return { parts: [part] };
       }
       if (size !== undefined && size > options.maxImageBytes) {
