@@ -6,123 +6,107 @@
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green.svg)](LICENSE)
-[![maibot-plugin-sdk](https://img.shields.io/badge/SDK-maibot--plugin--sdk-orange)](https://github.com/Mai-with-u/maibot-plugin-sdk)
+[![maibot-plugin-sdk](https://img.shields.io/badge/SDK-maibot--plugin--sdk%202.10%2B-orange)](https://github.com/Mai-with-u/maibot-plugin-sdk)
 
-
-📖 **完整详细教程请访问：**  
-**[MaiBot-iMessage-Adapter 详细使用教程](https://www.galeros.xyz/2026/07/07/imessage-adapter/)**
+原作者：Galeros（[mayan613](https://github.com/mayan613/MaiBot-iMessage-Adapter)），原版使用教程见 [galeros.xyz](https://www.galeros.xyz/2026/07/07/imessage-adapter/)。
+本仓库（GoenZero 的 Fork）从 0.2.0 起由 AI 维护并重写了传话层和侧车，改动见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 安装
 
-将本仓库克隆到 MaiBot 的 `plugins/` 下即可。
+将本仓库放到 MaiBot 的 `plugins/` 目录下即可。
 
 ```
 cd /path/to/MaiBot/plugins
-git clone https://github.com/mayan613/MaiBot-iMessage-Adapter.git
+git clone https://github.com/GoenZero/MaiBot-iMessage-Adapter.git
 ```
 
 ### 前置条件
 
-| 依赖 | 最低版本 | 用途 |
-|------|----------|------|
-| nodeenv (PyPI) | ≥ 1.10.0 | 系统无 Node.js 时自动安装到插件目录下 |
-| Node.js | ≥ 18 | 侧车运行时。插件优先使用系统安装的 Node.js；若未找到，会自动通过 nodeenv 安装到插件目录下的 `.nodeenv/` |
-| Photon 账号 | — | iMessage 云端服务，在 [app.photon.codes](https://app.photon.codes) 注册 |
-| MaiBot | ≥ 1.0.0 | 插件宿主 |
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| MaiBot | 插件 SDK ≥ 2.10.0（MaiBot 1.3.5 起） | 插件宿主 |
+| Node.js | ≥ 22 | 运行侧车。插件依次查找：WebUI 填写的路径 → 系统 PATH → 插件目录下的 `.nodeenv/` → 自动下载最新 LTS 版 |
+| nodeenv (PyPI) | ≥ 1.10.0 | 没有 Node.js 时自动下载，MaiBot 会自动安装这个依赖 |
+| Photon 账号 | — | 在 [app.photon.codes](https://app.photon.codes) 注册 |
 
+侧车已经在开发时打包成单个文件 `sidecar/dist/sidecar.mjs` 随仓库发布，**设备上不需要 npm install，也不需要编译**。首次启用时，如果系统里没有 Node.js，插件会自动下载（约 1–2 分钟），之后直接启动。
 
-首次启用时，插件会在插件目录下通过 `nodeenv` 自动提供 Node.js 运行时（若系统已有则跳过），然后自动执行 `npm install` 安装侧车依赖并编译 TypeScript（约 150 个包，可能需要 1-2 分钟）。后续启动将跳过此步骤。
-
+> **插件目录所在磁盘不保留可执行权限时（例如 fnOS 数据盘）**：自动下载的 node 可能无法运行。可以把 node 放到能执行的位置，并在 WebUI「本地侧车 → Node.js 路径」里填写完整路径。
 
 ## 架构
 
 ```
-MaiBot (plugin.py)  ←─本地 WebSocket─→  Node.js 侧车  ←─spectrum-ts SDK─→  Photon Cloud  ←─→  Apple iMessage
-   127.0.0.1:18763                     (sidecar/)                           (云端 Mac 服务器)
+MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.js 侧车 ──spectrum-ts── Photon 云端 ⇄ iMessage
+                           附件经本机临时文件传递
 ```
 
-- **Python 端**：负责 WebSocket Server、侧车进程管理、MaiBot SDK 组件注册
-- **Node.js 侧车**：薄壳，调用 `spectrum-ts` 官方 SDK发送接收消息
-
-
+- **Python 插件**（`plugin.py`、`core/`）：管理侧车进程（崩溃自动重启）、把消息在 iMessage 和 MaiBot 格式之间转换、WebUI 配置、管理命令
+- **Node.js 侧车**（`sidecar/`）：用 `@spectrum-ts/core` 和 `@spectrum-ts/imessage` 12.10.1 连接 Photon；源码在 `sidecar/src/`，打包结果在 `sidecar/dist/`
+- 每次发送都等侧车真正发出后，再把 iMessage 消息编号交还 MaiBot；失败会如实报告，不会「假装发出去了」
 
 ## 配置
 
 插件配置可通过 MaiBot WebUI 的插件配置页面修改。
 
-### 配置项说明
+| 配置节 | 字段 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `[plugin]` | `enabled` | false | 是否启用适配器 |
+| `[photon]` | `project_id` | "" | Photon 项目 ID |
+| `[photon]` | `project_secret` | "" | Photon 项目密钥 |
+| `[bridge]` | `max_retries` | 3 | 侧车异常退出后快速重试的次数；之后间隔逐渐拉长（最长 5 分钟）继续重试，只有认证失败才停 |
+| `[bridge]` | `retry_interval` | 3.0 | 重启间隔（秒） |
+| `[bridge]` | `max_attachment_size_mb` | 50 | 单个附件上限（MB），收发都适用 |
+| `[bridge]` | `handle_cache_size` | 500 | 记住最近多少条消息，供引用、点赞使用 |
+| `[bridge]` | `node_path` | "" | Node.js 路径，留空自动查找 |
 
-| 配置节 | 字段 | 类型 | 默认值 | 说明 |
-|--------|------|------|--------|------|
-| `[plugin]` | `enabled` | bool | false | 是否启用适配器 |
-| `[plugin]` | `config_version` | str | 1.0.0 | 配置版本（无需变更） |
-| `[photon]` | `project_id` | str | "" | Photon 项目 ID |
-| `[photon]` | `project_secret` | str | "" | Photon 项目密钥 |
-| `[bridge]` | `ws_port` | int | 18763 | 本地桥接 WebSocket 端口 |
-| `[bridge]` | `max_retries` | int | 3 | 侧车崩溃最大重启次数 |
-| `[bridge]` | `retry_interval` | float | 3.0 | 重启间隔（秒） |
-| `[bridge]` | `max_attachment_size_mb` | int | 10 | 最大附件大小（MB） |
+从 0.1.x 升级时，MaiBot 会自动把旧配置迁移到新结构，已填写的项目 ID、密钥等会保留；旧的「桥接端口」不再需要。
 
-### 使用 (MaiBot配置)
-MaiBot Core 仍会用主配置里的 bot 平台账号识别“机器人自己”。因此在启用此插件后，必须在MaiBot配置文件夹下的bot_config.toml中的 `[bot]` 部分中的 `platforms = []` 这个配置项加入以下信息:
+### 使用（MaiBot 配置）
+
+MaiBot Core 用主配置里的 bot 平台账号识别「机器人自己」。启用插件后，必须在 MaiBot 配置文件夹下 `bot_config.toml` 的 `[bot]` 部分，给 `platforms` 加入：
+
 ```toml
 [bot]
-platform = "" # 这项保持为空(如果你没有主要的平台)
-qq_account = "" # 和上个参数要求一致
-platforms = ["imessage:+10000000000"] # 重要: 格式要求为 "imessage:+10000000000"
-# "imessage:" 后跟的+1数字是你的Photon项目所分配的号码，请通过[Photon Dashboard] (https://app.photon.codes/dashboard/)获取。
-nickname = "麦麦" # 根据你的要求来改
-alias_names = [] 
+platforms = ["imessage:+10000000000"] # "imessage:" 后面是 Photon 给你的项目分配的号码
 ```
 
-当然，如果你不喜欢直接编辑配置文件，也可以在WebUI中设置，具体方法是:`麦麦设置-基础-平台账号右边的加号-平台imessage,账号就是+10000000000` (请填写自己的项目信息)。
-不设置将无法正常发送信息。
+也可以在 WebUI 里设置：`麦麦设置 - 基础 - 平台账号右边的加号 - 平台 imessage，账号填 +10000000000`。不设置将无法发送消息。
 
-初次使用必须先通过iMessage向Photon平台提供的号码发送信息，否则因平台限制将会出现`AuthenticationError: [spectrum-imessage] Target not allowed for this project`错误。
-Photon免费的计划不支持电子邮件地址的iMessage !
+初次使用必须先通过 iMessage 向 Photon 分配的号码发一条消息，否则会出现 `Target not allowed for this project`。仍报错时，到 Photon 控制台 Users 里添加号码；必要时用 debug.photon.codes 查出 Apple 实际使用的号码或邮箱再添加。
 
 ### 管理命令
 
 | 命令 | 说明 |
 |------|------|
-| `/imessage_status` | 查看连接状态、侧车 PID、重启次数 |
-| `/imessage_reconnect` | 手动重连侧车和 Photon |
+| `/imessage_status` | 查看连接状态、版本、重启次数、最近错误 |
+| `/imessage_reconnect` | 手动重连（认证失败停下后，改好配置也可以用它重试） |
 
-### 消息收发
+### 收到的消息怎么交给 AI
 
-- **收消息**：他人通过 iMessage 发给你 → 自动注入 MaiBot 消息管道 → LLM 回复
-- **发消息**：MaiBot 生成的回复 → 自动通过 iMessage 发送
+| 对方发来的 | AI 看到的 |
+|---|---|
+| 文字 | 原文 |
+| 照片（含 iPhone 默认的 HEIC） | 图片 |
+| 文字和多张照片一起发 | 文字和每一张图片，顺序不变 |
+| 长按某句话「回复」 | 消息本身，并标明引用的是哪一句 |
+| 联系人名片 | 姓名、电话、邮箱、单位 |
+| 语音、文件、链接、投票、应用卡片 | 一句说明，例如「对方发来一条语音消息，你暂时听不了语音」 |
+| 其他不认识的内容 | 「对方发了一条暂不支持的内容：…」 |
 
-## 注意事项
+任何消息都不会被整条丢掉。
 
-### 不支持的消息类型
+## 开发
 
-受限于 Photon 云端服务和MaiBot能力，以下消息类型**无法**正常收发，插件会自动拦截并记录日志：
+```sh
+# 侧车：类型检查、单元测试、检查打包文件与源码一致
+cd sidecar && npm ci && npm run check
+# 修改侧车源码后重新打包，并把 dist/ 一起提交
+npm run build
 
-| 消息类型 | 说明 |
-|----------|------|
-| 语音消息 (`.caf`) | Photon 的 AttachmentService 对 iMessage 语音附件下载存在 bug（gRPC `UNAVAILABLE`），已在侧车层拦截 |
-| 实况图片 (`.heic` / `.heif`) | Apple 实况图片格式无法被麦麦解析，已在侧车层拦截 |
-| 联系人名片 (vCard) | 联系人名片可作为 meta 信息接收，但不会生成可读消息内容 |
-
-### 其他限制
-
-- **免费版 Photon 不支持电子邮件地址的 iMessage**，仅支持手机号
-- **免费版 Photon 不支持主动发起会话**，必须先由对方通过 iMessage 向 Photon 号码发送首条消息后，才能回复
-- **附件大小**受 WebUI「最大附件大小」配置项控制（默认 10 MB），超出后 WebSocket 帧会被拒绝
-
-## 故障排查
-
-| 症状 | 可能原因 | 解决 |
-|------|----------|------|
-| `/imessage_status` 显示未连接 | 侧车未安装依赖或编译失败 | 插件会自动执行 `npm install && tsc`，查看日志确认是否成功 |
-| Photon 认证失败 | project_id/project_secret 配置错误 | 在 WebUI 插件配置页面检查凭证是否正确 |
-| 侧车反复重启 | 网络问题或 Photon 服务异常 | 查看 MaiBot 日志中的 `[侧车]` 前缀消息 |
-| 能收不能发 | 网关未就绪 | 等待 Photon 完全连接后重试，或用 `/imessage_status` 确认状态 |
-| 端口冲突 | 18763 被其他程序占用 | 在 WebUI 中修改「桥接端口」配置 |
-
-
+# Python：需要 maibot-plugin-sdk、pytest、pillow、pillow-heif、nodeenv
+python -m pytest tests
+```
 
 ## 许可证
 
-本项目基于 GPL-3.0 许可证开源。
+本项目基于 GPL-3.0 许可证开源。`sidecar/dist/sidecar.mjs` 中包含的第三方开源软件及其许可证见 `sidecar/dist/THIRD_PARTY_LICENSES.txt`。

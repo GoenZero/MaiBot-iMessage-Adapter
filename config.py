@@ -1,19 +1,18 @@
-"""iMessage 适配器配置模型。"""
+"""iMessage 适配器配置模型（WebUI 配置页由此自动生成）。"""
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Dict, Optional
+from typing import ClassVar, Dict, Optional
 
 from maibot_sdk import Field, PluginConfigBase
 
-SUPPORTED_CONFIG_VERSION = "1.0.0"
-# 供插件作者方便追踪插件版本
-PLUGIN_VERSION = "0.1.5"
+SUPPORTED_CONFIG_VERSION = "2.0.0"
+PLUGIN_VERSION = "0.2.0"
 
-DEFAULT_WS_PORT = 18763
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_RETRY_INTERVAL = 3.0
-DEFAULT_MAX_ATTACHMENT_SIZE_MB = 10
+DEFAULT_MAX_ATTACHMENT_SIZE_MB = 50
+DEFAULT_HANDLE_CACHE_SIZE = 500
 
 
 def _schema_i18n(
@@ -84,17 +83,6 @@ class IMessagePluginOptions(PluginConfigBase):
             "order": 99,
         },
     )
-    plugin_version: str = Field(
-        default=PLUGIN_VERSION,
-        description="当前插件版本，用于跟踪插件升级。",
-        json_schema_extra={
-            "disabled": True,
-            "hidden": True,
-            "i18n": _schema_i18n(label_en="Plugin version", label_ja="プラグインバージョン", label_ko="플러그인 버전"),
-            "label": "插件版本",
-            "order": 100,
-        },
-    )
 
     def should_connect(self) -> bool:
         """判断当前配置下是否应当启动连接。"""
@@ -153,48 +141,31 @@ class PhotonServerConfig(PluginConfigBase):
 
 
 class SidecarBridgeConfig(PluginConfigBase):
-    """本地 Node.js 侧车桥接配置。"""
+    """本地 Node.js 侧车配置。"""
 
-    __ui_label__: ClassVar[str] = "本地桥接"
+    __ui_label__: ClassVar[str] = "本地侧车"
     __ui_order__: ClassVar[int] = 2
 
-    ws_port: int = Field(
-        default=DEFAULT_WS_PORT,
-        description="Python 侧 WebSocket Server 的监听端口，侧车进程会连接此端口。",
-        json_schema_extra={
-            "hint": "仅监听 127.0.0.1，不会暴露到外网。如端口冲突可更换为其他未占用端口。",
-            "i18n": _schema_i18n(
-                label_en="Bridge port",
-                label_ja="ブリッジポート",
-                label_ko="브리지 포트",
-                hint_en="Listens on 127.0.0.1 only. Change to another free port if it conflicts.",
-                hint_ja="127.0.0.1 のみで待受します。ポートが競合する場合は他の空きポートに変更してください。",
-                hint_ko="127.0.0.1에서만 수신 대기합니다. 포트가 충돌하면 다른 사용 가능한 포트로 변경하십시오.",
-            ),
-            "label": "桥接端口",
-            "order": 0,
-        },
-    )
     max_retries: int = Field(
         default=DEFAULT_MAX_RETRIES,
-        description="侧车进程异常退出后的最大自动重启次数。",
+        description="侧车异常退出后，按「重启间隔」快速重试的次数；之后改为逐渐拉长间隔（最长 5 分钟）继续重试，不会放弃。",
         json_schema_extra={
-            "hint": "超过此次数后插件将放弃重启，需手动执行 /imessage_reconnect 或重载插件。",
+            "hint": "只有 Photon 认证失败时才会停止重试；修改项目 ID 或密钥后会自动重连。",
             "i18n": _schema_i18n(
-                label_en="Max retries",
-                label_ja="最大リトライ回数",
-                label_ko="최대 재시도 횟수",
-                hint_en="After exceeding this count the plugin stops restarting. Run /imessage_reconnect or reload the plugin manually.",
-                hint_ja="この回数を超えるとプラグインは再起動を停止します。手動で /imessage_reconnect を実行するか、プラグインを再読み込みしてください。",
-                hint_ko="이 횟수를 초과하면 플러그인이 재시작을 중지합니다. 수동으로 /imessage_reconnect를 실행하거나 플러그인을 다시 로드하십시오.",
+                label_en="Fast retries",
+                label_ja="高速リトライ回数",
+                label_ko="빠른 재시도 횟수",
+                hint_en="After these quick retries the interval grows up to 5 minutes; retrying stops only on Photon authentication failure.",
+                hint_ja="この回数の後は間隔を最大 5 分まで延ばして再試行を続けます。Photon 認証失敗時のみ停止します。",
+                hint_ko="이 횟수 이후에는 간격을 최대 5분까지 늘려 계속 재시도합니다. Photon 인증 실패 시에만 중지합니다.",
             ),
-            "label": "最大重启次数",
+            "label": "快速重试次数",
             "order": 1,
         },
     )
     retry_interval: float = Field(
         default=DEFAULT_RETRY_INTERVAL,
-        description="侧车进程异常退出后，等待多少秒再尝试重启。",
+        description="侧车异常退出后，等待多少秒再尝试重启。",
         json_schema_extra={
             "hint": "建议不低于 2 秒，给 Photon 服务端断开检测留出时间。",
             "i18n": _schema_i18n(
@@ -212,19 +183,57 @@ class SidecarBridgeConfig(PluginConfigBase):
     )
     max_attachment_size_mb: int = Field(
         default=DEFAULT_MAX_ATTACHMENT_SIZE_MB,
-        description="最大附件大小（MB），超出此大小的附件将被拒绝，仅限图片等支持的媒体类型。",
+        description="单个附件的大小上限（MB），收发都适用。超过上限的附件不会下载，会告诉 AI「文件太大没接收」。",
         json_schema_extra={
-            "hint": "设置过大可能导致 WebSocket 帧超限或内存占用过高。建议 1–50 MB。",
+            "hint": "附件通过本机临时文件传递，不再受内部连接大小限制。iMessage 本身单个附件最大约 100MB。",
             "i18n": _schema_i18n(
                 label_en="Max attachment size (MB)",
                 label_ja="最大添付ファイルサイズ (MB)",
                 label_ko="최대 첨부 파일 크기(MB)",
-                hint_en="Overly large values may cause WebSocket frame overflow or high memory usage. Recommended: 1–50 MB.",
-                hint_ja="大きすぎると WebSocket フレーム超過やメモリ使用量の増加を招く可能性があります。推奨: 1～50 MB。",
-                hint_ko="너무 큰 값은 WebSocket 프레임 초과 또는 높은 메모리 사용량을 초래할 수 있습니다. 권장: 1~50MB.",
+                hint_en="Attachments are exchanged through local temp files. iMessage itself allows about 100 MB per attachment.",
+                hint_ja="添付ファイルはローカルの一時ファイルで受け渡します。iMessage 自体の上限は約 100MB です。",
+                hint_ko="첨부 파일은 로컬 임시 파일로 전달됩니다. iMessage 자체 한도는 약 100MB입니다.",
             ),
-            "label": "最大附件大小（MB）",
+            "label": "附件大小上限（MB）",
             "order": 3,
+        },
+    )
+    handle_cache_size: int = Field(
+        default=DEFAULT_HANDLE_CACHE_SIZE,
+        description="侧车记住最近多少条消息，供引用、点赞、撤回、编辑使用。",
+        json_schema_extra={
+            "hint": "重启后会清空；更早的消息侧车会尝试向 Photon 查询。",
+            "i18n": _schema_i18n(
+                label_en="Recent message cache",
+                label_ja="最近のメッセージキャッシュ",
+                label_ko="최근 메시지 캐시",
+                hint_en="Cleared on restart; older messages are looked up from Photon when possible.",
+                hint_ja="再起動でクリアされます。古いメッセージは可能なら Photon から検索します。",
+                hint_ko="재시작 시 초기화됩니다. 오래된 메시지는 가능하면 Photon에서 조회합니다.",
+            ),
+            "label": "消息缓存条数",
+            "order": 4,
+        },
+    )
+    node_path: str = Field(
+        default="",
+        description="Node.js 程序的完整路径。留空则自动查找（系统 → 插件目录 → 自动下载）。",
+        json_schema_extra={
+            "hint": "插件目录所在磁盘不保留可执行权限时（例如 fnOS 数据盘），可把 node 放到别处并在这里填写路径。需要 Node.js 22 或以上。",
+            "i18n": _schema_i18n(
+                label_en="Node.js path",
+                label_ja="Node.js のパス",
+                label_ko="Node.js 경로",
+                hint_en="Leave empty to auto-detect. Useful when the plugin disk does not keep executable bits. Node.js 22+ required.",
+                hint_ja="空欄なら自動検出します。プラグインのディスクが実行権限を保持しない場合に指定します。Node.js 22 以上が必要です。",
+                hint_ko="비워 두면 자동으로 찾습니다. 플러그인 디스크가 실행 권한을 유지하지 않을 때 지정하십시오. Node.js 22 이상 필요.",
+                placeholder_en="/usr/local/bin/node",
+                placeholder_ja="/usr/local/bin/node",
+                placeholder_ko="/usr/local/bin/node",
+            ),
+            "label": "Node.js 路径（可选）",
+            "order": 5,
+            "placeholder": "/usr/local/bin/node",
         },
     )
 

@@ -1,0 +1,2 @@
+sidecar/dist/** linguist-generated=true -diff
+sidecar/package-lock.json linguist-generated=true
