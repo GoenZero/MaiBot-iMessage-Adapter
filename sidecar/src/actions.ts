@@ -1,12 +1,14 @@
 /**
- * 出站动作：发送、引用回复、点赞、编辑、撤回、输入中、标记已读。
+ * 出站动作：发送（含特效、投票、链接预览）、引用回复、点赞、编辑、撤回、聊天背景、分享名片、
+ * 输入中、标记已读。
  *
  * 每个动作都以 SDK 的实际调用结果为准：
  * - SDK 抛错 → 失败
  * - SDK 返回空（内容被判定为不支持、跳过）→ 也算失败（NOT_DELIVERED）
  * - 成功时返回 iMessage 消息编号，并把消息对象存进句柄缓存，供以后引用、撤回
  */
-import { Emoji, attachment, markdown, text } from "@spectrum-ts/core";
+import { Emoji, attachment, markdown, poll, richlink, text } from "@spectrum-ts/core";
+import { background, effect, nativeContactCard } from "@spectrum-ts/imessage";
 
 import type { MessageLike } from "./convert.ts";
 import type { LruCache } from "./handles.ts";
@@ -31,17 +33,47 @@ export interface SpaceLike {
   getMessage(id: string): Promise<unknown>;
 }
 
+/** iMessage 消息特效：名称 → Apple 的特效编号。前 8 种是全屏特效，后 5 种是气泡特效。 */
+export const EFFECTS = {
+  balloons: "com.apple.messages.effect.CKBalloonEffect",
+  confetti: "com.apple.messages.effect.CKConfettiEffect",
+  fireworks: "com.apple.messages.effect.CKFireworksEffect",
+  celebration: "com.apple.messages.effect.CKHappyBirthdayEffect",
+  heart: "com.apple.messages.effect.CKHeartEffect",
+  lasers: "com.apple.messages.effect.CKLasersEffect",
+  sparkles: "com.apple.messages.effect.CKSparklesEffect",
+  spotlight: "com.apple.messages.effect.CKSpotlightEffect",
+  echo: "com.apple.messages.effect.CKEchoEffect",
+  slam: "com.apple.MobileSMS.expressivesend.impact",
+  loud: "com.apple.MobileSMS.expressivesend.loud",
+  gentle: "com.apple.MobileSMS.expressivesend.gentle",
+  invisible: "com.apple.MobileSMS.expressivesend.invisibleink",
+} as const;
+export type EffectName = keyof typeof EFFECTS;
+
+export const MAX_POLL_OPTIONS = 12;
+
 /** 内容构造函数，默认使用 SDK 的实现；测试时可替换。 */
 export interface Builders {
   text(value: string): unknown;
   markdown(value: string): unknown;
   attachment(data: Buffer, options: { mimeType: string; name?: string }): unknown;
+  effect(content: unknown, name: EffectName): unknown;
+  poll(title: string, options: string[]): unknown;
+  richlink(url: string): unknown;
+  background(data: Buffer | "clear", mimeType?: string): unknown;
+  contactCard(): unknown;
 }
 
 export const sdkBuilders: Builders = {
   text: (value) => text(value),
   markdown: (value) => markdown(value),
   attachment: (data, options) => attachment(data, options),
+  effect: (content, name) => effect(content as Parameters<typeof effect>[0], EFFECTS[name]),
+  poll: (title, options) => poll(title, options),
+  richlink: (url) => richlink(url),
+  background: (data, mimeType) => (data === "clear" ? background("clear") : background(data, { mimeType: mimeType ?? "image/jpeg" })),
+  contactCard: () => nativeContactCard(),
 };
 
 /** iMessage 的六种点赞（Tapback）。 */
@@ -67,9 +99,17 @@ interface OutPart {
   type: string;
   text?: unknown;
   markdown?: unknown;
+  effect?: unknown;
   path?: unknown;
   mime?: unknown;
   name?: unknown;
+  title?: unknown;
+  options?: unknown;
+  url?: unknown;
+}
+
+function isEffectName(value: unknown): value is EffectName {
+  return typeof value === "string" && Object.hasOwn(EFFECTS, value);
 }
 
 function isMessage(value: unknown): value is ActionMessage {
@@ -111,7 +151,27 @@ export class Actions {
       if (raw?.type === "text") {
         const value = typeof raw.text === "string" ? raw.text : "";
         if (!value.trim()) continue;
-        contents.push(raw.markdown === true ? this.deps.builders.markdown(value) : this.deps.builders.text(value));
+        const content = raw.markdown === true ? this.deps.builders.markdown(value) : this.deps.builders.text(value);
+        if (raw.effect === undefined) {
+          contents.push(content);
+        } else if (isEffectName(raw.effect)) {
+          contents.push(this.deps.builders.effect(content, raw.effect));
+        } else {
+          throw new BridgeError("BAD_REQUEST", `不认识的特效：${String(raw.effect)}`);
+        }
+      } else if (raw?.type === "poll") {
+        const title = typeof raw.title === "string" ? raw.title.trim() : "";
+        const options = Array.isArray(raw.options)
+          ? raw.options.filter((o): o is string => typeof o === "string" && Boolean(o.trim())).map((o) => o.trim())
+          : [];
+        if (!title) throw new BridgeError("BAD_REQUEST", "投票缺少标题");
+        if (options.length < 2 || options.length > MAX_POLL_OPTIONS) {
+          throw new BridgeError("BAD_REQUEST", `投票要有 2 到 ${MAX_POLL_OPTIONS} 个选项`);
+        }
+        contents.push(this.deps.builders.poll(title, options));
+      } else if (raw?.type === "link") {
+        if (typeof raw.url !== "string" || !/^https?:\/\/\S+$/.test(raw.url)) throw new BridgeError("BAD_REQUEST", "链接格式不对");
+        contents.push(this.deps.builders.richlink(raw.url));
       } else if (raw?.type === "file") {
         if (typeof raw.path !== "string" || typeof raw.mime !== "string") {
           throw new BridgeError("BAD_REQUEST", "文件片段缺少 path 或 mime");
@@ -132,7 +192,11 @@ export class Actions {
   async send(args: Record<string, unknown>): Promise<{ message_ids: string[]; quoted: boolean; partial: boolean }> {
     const space = await this.deps.resolveSpace(requireString(args, "chat_id"));
     const contents = await this.buildContents(args.parts);
-    const replyTo = optionalString(args, "reply_to");
+    let replyTo = optionalString(args, "reply_to");
+    if (replyTo && Array.isArray(args.parts) && args.parts.some((part) => (part as OutPart | null)?.type === "poll")) {
+      // iMessage 的投票不能以引用回复的形式发出
+      replyTo = undefined;
+    }
 
     let target: ActionMessage | undefined;
     if (replyTo) {
@@ -196,6 +260,33 @@ export class Actions {
     return {};
   }
 
+  /** 设置或清除聊天背景。设置时用这个对话里某条消息里的图片。 */
+  async background(args: Record<string, unknown>): Promise<Record<string, never>> {
+    const space = await this.deps.resolveSpace(requireString(args, "chat_id"));
+    const action = requireString(args, "action");
+    if (action === "clear") {
+      await space.send(this.deps.builders.background("clear"));
+      return {};
+    }
+    if (action !== "set") throw new BridgeError("BAD_REQUEST", "action 只能是 set 或 clear");
+    const messageId = requireString(args, "message_id");
+    const message = await this.findMessage(space, messageId);
+    if (!message) throw new BridgeError("MESSAGE_NOT_FOUND", `找不到消息 ${messageId}，可能太久远或适配器重启过`);
+    const image = findImage(message.content);
+    if (!image) throw new BridgeError("NO_IMAGE", "这条消息里没有图片");
+    const data = await image.read();
+    if (data.length > this.deps.maxAttachmentBytes) throw new BridgeError("TOO_LARGE", "图片太大");
+    await space.send(this.deps.builders.background(data, image.mimeType));
+    return {};
+  }
+
+  /** 把机器人账号自己的名字和头像分享给对方（Apple 的「共享名字与照片」）。 */
+  async shareContact(args: Record<string, unknown>): Promise<Record<string, never>> {
+    const space = await this.deps.resolveSpace(requireString(args, "chat_id"));
+    await space.send(this.deps.builders.contactCard());
+    return {};
+  }
+
   /** 开始或停止「正在输入」。 */
   async typing(args: Record<string, unknown>): Promise<Record<string, never>> {
     const state = requireString(args, "state");
@@ -215,4 +306,27 @@ export class Actions {
     await target.read();
     return {};
   }
+}
+
+interface ReadableImage {
+  mimeType: string;
+  read(): Promise<Buffer>;
+}
+
+/** 在一条消息的内容里找第一张图片（普通图片附件，或组合消息、引用回复里的图片）。 */
+export function findImage(content: unknown, depth = 0): ReadableImage | undefined {
+  if (depth > 4 || typeof content !== "object" || content === null) return undefined;
+  const record = content as Record<string, unknown>;
+  if (record.type === "attachment" && typeof record.mimeType === "string" && record.mimeType.startsWith("image/")) {
+    const read = record.read;
+    if (typeof read === "function") return { mimeType: record.mimeType, read: () => (read as () => Promise<Buffer>).call(record) };
+  }
+  if (record.type === "group" && Array.isArray(record.items)) {
+    for (const item of record.items) {
+      const found = findImage((item as { content?: unknown } | null)?.content, depth + 1);
+      if (found) return found;
+    }
+  }
+  if (record.type === "reply" || record.type === "effect") return findImage(record.content, depth + 1);
+  return undefined;
 }

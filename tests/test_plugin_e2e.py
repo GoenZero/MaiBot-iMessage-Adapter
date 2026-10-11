@@ -511,3 +511,66 @@ def test_link_state_shows_in_status(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     texts = [p["args"]["text"] for p in host.of("cap.call") if p["capability"] == "send.text"]
     assert "正在自动重连" in texts[0]
     assert "✅ 已连接" in texts[1] and "最近一次中断" in texts[1] and "已自动恢复" in texts[1]
+
+
+def test_effect_and_poll_tools_go_through_maibot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        sent = await plugin.tool_send_effect(text="生日快乐", effect="fireworks", stream_id="s-imessage")
+        assert sent["success"] is True and "烟花" in sent["content"]
+        bad = await plugin.tool_send_effect(text="x", effect="rainbow", stream_id="s-imessage")
+        assert bad["success"] is False
+
+        poll = await plugin.tool_poll(title="周末去哪", options=["海边", "爬山", "海边"], stream_id="s-imessage")
+        assert poll["success"] is True and "海边 / 爬山" in poll["content"]
+        too_few = await plugin.tool_poll(title="?", options=["只有一个"], stream_id="s-imessage")
+        assert too_few["success"] is False
+
+        # MaiBot 把消息交回网关时，标记会变成 dict 段；网关据此加特效
+        await plugin.send_to_imessage(
+            {
+                "raw_message": [
+                    {"type": "text", "data": "生日快乐"},
+                    {"type": "dict", "data": {"type": "烟花特效", "imessage": {"effect": "fireworks"}}},
+                ],
+                "message_info": {"additional_config": {"platform_io_target_user_id": "+1"}},
+            }
+        )
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    hybrids = [p for p in host.of("cap.call") if p["capability"] == "send.hybrid"]
+    assert len(hybrids) == 2
+    effect_args = hybrids[0]["args"]
+    assert effect_args["stream_id"] == "s-imessage"
+    assert effect_args["sync_to_maisaka_history"] is True
+    assert effect_args["segments"][1]["data"] == {"type": "烟花特效", "imessage": {"effect": "fireworks"}}
+    assert hybrids[1]["args"]["segments"][0]["data"]["imessage"]["poll"] == {"title": "周末去哪", "options": ["海边", "爬山"]}
+    send = next(op for op in sidecar_ops(tmp_path) if op["op"] == "send")
+    assert send["args"]["parts"] == [{"type": "text", "text": "生日快乐", "effect": "fireworks"}]
+
+
+def test_background_and_contact_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        assert (await plugin.tool_background(action="set", msg_id="img", stream_id="s-imessage"))["success"] is True
+        assert (await plugin.tool_background(action="clear", stream_id="s-imessage"))["content"] == "已清除聊天背景"
+        no_image = await plugin.tool_background(action="set", msg_id="txt", stream_id="s-imessage")
+        assert "没有图片" in no_image["error"]
+        missing_id = await plugin.tool_background(action="set", stream_id="s-imessage")
+        assert missing_id["success"] is False
+        shared = await plugin.tool_share_contact(stream_id="s-imessage")
+        assert shared["success"] is True
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    ops = [op for op in sidecar_ops(tmp_path) if op["op"] in ("background", "share_contact")]
+    assert [op["op"] for op in ops] == ["background", "background", "background", "share_contact"]
+    assert ops[0]["args"] == {"chat_id": "+1", "action": "set", "message_id": "img"}
+    assert ops[1]["args"] == {"chat_id": "+1", "action": "clear"}

@@ -51,6 +51,13 @@ rl.on("line", (line) => {
         frame({ t: "res", id: req.id, ok: true, result: {} });
       }
       break;
+    case "background":
+      if (req.args.message_id === "txt") {
+        frame({ t: "res", id: req.id, ok: false, error: { code: "NO_IMAGE", message: "没有图片" } });
+      } else {
+        frame({ t: "res", id: req.id, ok: true, result: {} });
+      }
+      break;
     case "fail":
       frame({ t: "res", id: req.id, ok: false, error: { code: "TARGET_NOT_ALLOWED", message: "Target not allowed" } });
       break;

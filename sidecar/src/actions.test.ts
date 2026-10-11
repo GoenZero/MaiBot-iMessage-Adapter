@@ -4,13 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { type ActionMessage, Actions, type Builders, type SpaceLike } from "./actions.ts";
+import { type ActionMessage, Actions, type Builders, findImage, type SpaceLike } from "./actions.ts";
 import { LruCache } from "./handles.ts";
 
 const builders: Builders = {
   text: (value) => ({ kind: "text", value }),
   markdown: (value) => ({ kind: "markdown", value }),
   attachment: (data, options) => ({ kind: "attachment", bytes: data.length, ...options }),
+  effect: (content, name) => ({ kind: "effect", name, content }),
+  poll: (title, options) => ({ kind: "poll", title, options }),
+  richlink: (url) => ({ kind: "richlink", url }),
+  background: (data, mimeType) => ({ kind: "background", data: data === "clear" ? "clear" : data.length, mimeType }),
+  contactCard: () => ({ kind: "contactCard" }),
 };
 
 function sentMessage(id: string): ActionMessage {
@@ -153,4 +158,44 @@ test("编辑与撤回：只能操作自己发出的消息，找不到时明确�
   await actions.unsend({ chat_id: "+1", message_id: "out-1" });
   assert.equal(unsent, 1);
   assert.equal(handles.get("out-1"), undefined); // 撤回后从缓存里移除
+});
+
+test("特效、投票、链接预览按片段类型构造", async () => {
+  const { actions, calls } = setup();
+  await actions.send({ chat_id: "+1", parts: [{ type: "text", text: "生日快乐", effect: "fireworks" }] });
+  assert.deepEqual(calls[0]?.contents, [{ kind: "effect", name: "fireworks", content: { kind: "text", value: "生日快乐" } }]);
+
+  await actions.send({ chat_id: "+1", parts: [{ type: "poll", title: "周末去哪", options: ["海边", " 爬山 ", ""] }] });
+  assert.deepEqual(calls[1]?.contents, [{ kind: "poll", title: "周末去哪", options: ["海边", "爬山"] }]);
+
+  // 投票不能引用回复：带了 reply_to 也普通发送
+  const pollReply = await actions.send({ chat_id: "+1", parts: [{ type: "poll", title: "t", options: ["a", "b"] }], reply_to: "in-1" });
+  assert.equal(pollReply.quoted, false);
+  calls.pop();
+
+  await actions.send({ chat_id: "+1", parts: [{ type: "link", url: "https://example.com/a" }] });
+  assert.deepEqual(calls[2]?.contents, [{ kind: "richlink", url: "https://example.com/a" }]);
+
+  await assert.rejects(actions.send({ chat_id: "+1", parts: [{ type: "text", text: "x", effect: "rainbow" }] }), { code: "BAD_REQUEST" });
+  await assert.rejects(actions.send({ chat_id: "+1", parts: [{ type: "poll", title: "只有一个", options: ["a"] }] }), { code: "BAD_REQUEST" });
+  await assert.rejects(actions.send({ chat_id: "+1", parts: [{ type: "link", url: "javascript:alert(1)" }] }), { code: "BAD_REQUEST" });
+});
+
+test("聊天背景：用对话里的图片设置，或清除；分享名片", async () => {
+  const { actions, calls, handles } = setup(() => undefined); // 背景和名片都不产生消息
+  const image = { type: "attachment", mimeType: "image/png", read: async () => Buffer.from([1, 2, 3]) };
+  handles.set("img-1", { id: "img-1", content: { type: "group", items: [{ content: { type: "text", text: "看" } }, { content: image }] } });
+  handles.set("txt-1", { id: "txt-1", content: { type: "text", text: "没有图" } });
+
+  await actions.background({ chat_id: "+1", action: "set", message_id: "img-1" });
+  await actions.background({ chat_id: "+1", action: "clear" });
+  await actions.shareContact({ chat_id: "+1" });
+  assert.deepEqual(
+    calls.map((c) => c.contents),
+    [[{ kind: "background", data: 3, mimeType: "image/png" }], [{ kind: "background", data: "clear", mimeType: undefined }], [{ kind: "contactCard" }]],
+  );
+  await assert.rejects(actions.background({ chat_id: "+1", action: "set", message_id: "txt-1" }), { code: "NO_IMAGE" });
+  await assert.rejects(actions.background({ chat_id: "+1", action: "set", message_id: "nope" }), { code: "MESSAGE_NOT_FOUND" });
+  await assert.rejects(actions.background({ chat_id: "+1", action: "paint" }), { code: "BAD_REQUEST" });
+  assert.equal(findImage({ type: "attachment", mimeType: "application/pdf", read: async () => Buffer.alloc(0) }), undefined);
 });

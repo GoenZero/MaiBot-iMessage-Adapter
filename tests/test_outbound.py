@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 
-from imessage_adapter_under_test.core.outbound import build_outbound_plan, resolve_target, sniff_image_mime
+from imessage_adapter_under_test.core.outbound import apply_link_previews, build_outbound_plan, resolve_target, sniff_image_mime
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 20
@@ -36,7 +36,43 @@ def test_reply_target_and_skips(tmp_path):
     plan = build_outbound_plan(message, tmp_path, 1024)
     assert plan.reply_to == "in-1"
     assert plan.parts == [{"type": "text", "text": "好的"}]
-    assert plan.skipped == ["voice", "dict"]
+    assert plan.skipped == ["voice", "自定义内容（imessage_effect）"]  # 别的插件的自定义内容照旧跳过
+
+
+def test_effect_and_poll_markers(tmp_path):
+    effect = build_outbound_plan(
+        {
+            "raw_message": [
+                {"type": "text", "data": "生日快乐"},
+                {"type": "dict", "data": {"type": "烟花特效", "imessage": {"effect": "fireworks"}}},
+            ]
+        },
+        tmp_path,
+        1024,
+    )
+    assert effect.parts == [{"type": "text", "text": "生日快乐", "effect": "fireworks"}]
+    assert effect.skipped == []
+
+    poll = build_outbound_plan(
+        {"raw_message": [{"type": "dict", "data": {"type": "投票「去哪」", "imessage": {"poll": {"title": "去哪", "options": ["海边", "", "山"]}}}}]},
+        tmp_path,
+        1024,
+    )
+    assert poll.parts == [{"type": "poll", "title": "去哪", "options": ["海边", "山"]}]
+
+    lonely = build_outbound_plan({"raw_message": [{"type": "dict", "data": {"type": "x", "imessage": {"effect": "slam"}}}]}, tmp_path, 1024)
+    assert lonely.parts == [] and "没有文字可加" in lonely.skipped[0]
+
+
+def test_link_previews_only_for_bare_urls():
+    parts = [
+        {"type": "text", "text": " https://example.com/a?b=1 "},
+        {"type": "text", "text": "看这个 https://example.com"},
+        {"type": "text", "text": "https://example.com", "effect": "slam"},
+    ]
+    apply_link_previews(parts)
+    assert parts[0] == {"type": "link", "url": "https://example.com/a?b=1"}
+    assert parts[1]["type"] == "text" and parts[2]["type"] == "text"
 
 
 def test_oversize_image_is_skipped(tmp_path):

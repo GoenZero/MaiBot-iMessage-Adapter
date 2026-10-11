@@ -306,6 +306,51 @@ class CapabilitiesConfig(PluginConfigBase):
             "order": 6,
         },
     )
+    effects: bool = Field(
+        default=True,
+        description="允许 AI 在特别的时刻（生日、祝贺等）发带特效的消息，例如气球、烟花、隐形墨水。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Message effects", label_ja="メッセージエフェクト", label_ko="메시지 효과"),
+            "label": "消息特效",
+            "order": 7,
+        },
+    )
+    polls: bool = Field(
+        default=True,
+        description="允许 AI 发起投票，让你在几个选项里点选。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Polls", label_ja="投票", label_ko="투표"),
+            "label": "投票",
+            "order": 8,
+        },
+    )
+    chat_background: bool = Field(
+        default=True,
+        description="你要求时，AI 可以把你发的某张图片设为这个对话的聊天背景，或清除背景。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Chat background", label_ja="チャット背景", label_ko="채팅 배경"),
+            "label": "聊天背景",
+            "order": 9,
+        },
+    )
+    share_contact: bool = Field(
+        default=True,
+        description="你要 AI 的联系方式时，AI 可以用 iMessage「共享名字与照片」把机器人账号的名字和头像发给你。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Share contact card", label_ja="連絡先カードを共有", label_ko="연락처 카드 공유"),
+            "label": "分享名片",
+            "order": 10,
+        },
+    )
+    link_preview: bool = Field(
+        default=True,
+        description="AI 的一段回复只有一个链接时，以链接预览卡片发出（显示网页标题和图片）。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Link previews", label_ja="リンクプレビュー", label_ko="링크 미리보기"),
+            "label": "链接预览",
+            "order": 11,
+        },
+    )
     reply_mode: Literal["auto", "always", "off"] = Field(
         default="auto",
         description="AI 的回复要不要以「引用对方某句话」的形式发出。auto：AI 自己决定；always：总是引用对方最新一句；off：从不引用。",

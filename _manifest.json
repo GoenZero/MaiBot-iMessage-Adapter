@@ -3,7 +3,7 @@
   "id": "com.galeros.imessage_adapter",
   "version": "0.2.0",
   "name": "iMessage 连接器 / iMessage Adapter",
-  "description": "将你的MaiBot通过Photon连接到iMessage，支持收发文字、图片（含 HEIC）、引用回复、点赞、输入中提示等 iMessage 能力。",
+  "description": "将你的MaiBot通过Photon连接到iMessage，支持收发文字、图片（含 HEIC）、引用回复、点赞、编辑撤回、特效、投票、输入中提示等 iMessage 能力。",
   "author": {
     "name": "mayan613",
     "url": "https://github.com/mayan613"
@@ -44,6 +44,7 @@
   },
   "capabilities": [
     "send.text",
+    "send.hybrid",
     "chat.get_all_streams"
   ],
   "i18n": {

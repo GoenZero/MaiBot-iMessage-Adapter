@@ -45,6 +45,45 @@ UNSEND_DESCRIPTION = (
     "只能撤回你自己 2 分钟内发的消息。要撤回点赞，请用 imessage_react 并填 remove=true。"
 )
 
+EFFECT_NAMES = {
+    "balloons": "气球",
+    "confetti": "彩纸",
+    "fireworks": "烟花",
+    "celebration": "庆祝",
+    "heart": "爱心",
+    "lasers": "激光",
+    "sparkles": "闪光",
+    "spotlight": "聚光灯",
+    "echo": "回声",
+    "slam": "重击",
+    "loud": "大声",
+    "gentle": "轻声",
+    "invisible": "隐形墨水",
+}
+EFFECT_DESCRIPTION = (
+    "发一条带 iMessage 特效的消息，就像在 iPhone 上长按发送键选特效。"
+    "只在特别的时刻用：生日、节日祝福、祝贺好消息、表白、强调一句很重要的话。平时聊天不要用，一天最多一两次。"
+    "这条消息就是你这次的回复，发完不要再用 reply 重复同样的话。"
+    "effect 可选，全屏特效：balloons=气球，confetti=彩纸，fireworks=烟花，celebration=庆祝，heart=爱心，"
+    "lasers=激光，sparkles=闪光，spotlight=聚光灯，echo=回声；"
+    "气泡特效：slam=重击，loud=大声，gentle=轻声，invisible=隐形墨水（对方要用手指擦开才能看到）。"
+)
+MAX_POLL_OPTIONS = 12
+POLL_DESCRIPTION = (
+    "在聊天里发起一个 iMessage 投票，对方可以直接点选项。"
+    "适合需要对方在几个选项里做选择时，例如去哪吃饭、周末做什么、几个方案选哪个。"
+    "title 是问题，options 是 2 到 12 个简短选项。对方投票后你会收到通知。"
+    "这条投票就是你这次的回复，不要再用 reply 重复同样的问题。"
+)
+BACKGROUND_DESCRIPTION = (
+    "设置或清除这个 iMessage 对话的聊天背景，双方都会看到。只在对方明确要求换背景或清除背景时用。"
+    "action=set 时用 msg_id 指定一条带图片的消息（通常是对方刚发来的那张图）；action=clear 清除背景，不用填 msg_id。"
+)
+SHARE_CONTACT_DESCRIPTION = (
+    "用 iMessage 的「共享名字与照片」把你自己的名字和头像发给对方，对方手机上会提示是否保存。"
+    "只在对方想要你的联系方式、问你是谁、或要你的名片时用；不要主动反复发。"
+)
+
 
 class IMessageToolsMixin:
     """AI 工具。依赖插件类提供的 config、ctx、_supervisor、_chat_for_stream。"""
@@ -195,3 +234,148 @@ class IMessageToolsMixin:
         if done < len(message_ids):
             return {"success": True, "content": f"这条回复有 {len(message_ids)} 部分，撤回了 {done} 部分"}
         return {"success": True, "content": "已撤回这条消息"}
+
+    # ── 特效与投票：走 MaiBot 的发送流程，聊天记录里能看到 ────────
+
+    async def _send_marked(
+        self, stream_id: str, segments: List[Dict[str, Any]], plain_text: str
+    ) -> Optional[str]:
+        """通过 MaiBot 发出带 iMessage 动作标记的消息，并同步进 AI 的聊天记录。成功返回 None，失败返回原因。"""
+        try:
+            result = await self.ctx.send.hybrid(
+                segments,
+                stream_id,
+                processed_plain_text=plain_text,
+                sync_to_maisaka_history=True,
+                # 和 MaiBot 自带的发表情工具一样，标成机器人自己的回复
+                maisaka_source_kind="guided_reply",
+            )
+        except Exception as exc:  # noqa: BLE001 - 任何失败都只告诉 AI，不影响聊天
+            self.ctx.logger.warning("iMessage 工具：发送失败 %s", exc)
+            return str(exc)
+        # SDK 把发送结果还原成 True / False；失败的具体原因 MaiBot 会写进它自己的日志
+        return None if result is True else "发送失败（详见 MaiBot 日志）"
+
+    @Tool(
+        "imessage_send_effect",
+        description=EFFECT_DESCRIPTION,
+        parameters=[
+            ToolParameterInfo(name="text", param_type=ToolParamType.STRING, description="要发的话"),
+            ToolParameterInfo(
+                name="effect",
+                param_type=ToolParamType.STRING,
+                description="特效名称",
+                enum_values=list(EFFECT_NAMES),
+            ),
+        ],
+        chat_scope="private",
+    )
+    async def tool_send_effect(self, text: str = "", effect: str = "", stream_id: str = "", **kwargs: Any) -> Dict[str, Any]:
+        del kwargs
+        _, refused = await self._tool_chat(stream_id, "effects")
+        if refused:
+            return refused
+        if effect not in EFFECT_NAMES:
+            return {"success": False, "error": f"effect 只能是 {', '.join(EFFECT_NAMES)}"}
+        if not text.strip():
+            return {"success": False, "error": "要发的话不能为空"}
+        label = f"{EFFECT_NAMES[effect]}特效"
+        segments = [
+            {"type": "text", "data": text},
+            {"type": "imessage", "data": {"type": label, "imessage": {"effect": effect}}},
+        ]
+        error = await self._send_marked(stream_id, segments, f"{text}（{label}）")
+        if error:
+            return {"success": False, "error": f"这次没发出去：{error}"}
+        return {"success": True, "content": f"已发出带「{EFFECT_NAMES[effect]}」特效的消息：{text}。这就是你这次的回复。"}
+
+    @Tool(
+        "imessage_poll",
+        description=POLL_DESCRIPTION,
+        parameters=[
+            ToolParameterInfo(name="title", param_type=ToolParamType.STRING, description="投票的问题"),
+            ToolParameterInfo(
+                name="options",
+                param_type=ToolParamType.ARRAY,
+                description="2 到 12 个选项",
+                items_schema={"type": "string"},
+            ),
+        ],
+        chat_scope="private",
+    )
+    async def tool_poll(self, title: str = "", options: Any = None, stream_id: str = "", **kwargs: Any) -> Dict[str, Any]:
+        del kwargs
+        _, refused = await self._tool_chat(stream_id, "polls")
+        if refused:
+            return refused
+        choices = [str(option).strip() for option in options or [] if str(option).strip()] if isinstance(options, list) else []
+        # 去掉重复选项，保留顺序
+        choices = list(dict.fromkeys(choices))
+        if not title.strip():
+            return {"success": False, "error": "投票要有问题（title）"}
+        if not 2 <= len(choices) <= MAX_POLL_OPTIONS:
+            return {"success": False, "error": f"投票要有 2 到 {MAX_POLL_OPTIONS} 个不同的选项"}
+        label = f"投票「{title.strip()}」（选项：{' / '.join(choices)}）"
+        segments = [{"type": "imessage", "data": {"type": label, "imessage": {"poll": {"title": title.strip(), "options": choices}}}}]
+        error = await self._send_marked(stream_id, segments, label)
+        if error:
+            return {"success": False, "error": f"这次没发出去：{error}"}
+        return {"success": True, "content": f"已发起{label}。对方投票后你会收到通知。"}
+
+    # ── 聊天背景与名片：不产生消息，直接让侧车执行 ────────
+
+    @Tool(
+        "imessage_background",
+        description=BACKGROUND_DESCRIPTION,
+        parameters=[
+            ToolParameterInfo(
+                name="action",
+                param_type=ToolParamType.STRING,
+                description="set=设置背景，clear=清除背景",
+                enum_values=["set", "clear"],
+            ),
+            ToolParameterInfo(
+                name="msg_id",
+                param_type=ToolParamType.STRING,
+                description="action=set 时，带图片的那条消息的 msg_id",
+                required=False,
+            ),
+        ],
+        chat_scope="private",
+    )
+    async def tool_background(self, action: str = "", msg_id: str = "", stream_id: str = "", **kwargs: Any) -> Dict[str, Any]:
+        del kwargs
+        chat_id, refused = await self._tool_chat(stream_id, "background")
+        if refused:
+            return refused
+        if action not in ("set", "clear"):
+            return {"success": False, "error": "action 只能是 set 或 clear"}
+        if action == "set" and not msg_id:
+            return {"success": False, "error": "设置背景要用 msg_id 指定一条带图片的消息"}
+        args: Dict[str, Any] = {"chat_id": chat_id, "action": action}
+        if action == "set":
+            args["message_id"] = msg_id
+        try:
+            await self._sidecar_call("background", args)
+        except SidecarError as exc:
+            if exc.code == "NO_IMAGE":
+                return {"success": False, "error": "这条消息里没有图片，换一条带图片的消息"}
+            return self._tool_failure("设置", exc)
+        return {"success": True, "content": "已把聊天背景换成这张图片" if action == "set" else "已清除聊天背景"}
+
+    @Tool(
+        "imessage_share_contact",
+        description=SHARE_CONTACT_DESCRIPTION,
+        parameters=[],
+        chat_scope="private",
+    )
+    async def tool_share_contact(self, stream_id: str = "", **kwargs: Any) -> Dict[str, Any]:
+        del kwargs
+        chat_id, refused = await self._tool_chat(stream_id, "contact_card")
+        if refused:
+            return refused
+        try:
+            await self._sidecar_call("share_contact", {"chat_id": chat_id})
+        except SidecarError as exc:
+            return self._tool_failure("分享", exc)
+        return {"success": True, "content": "已把你的名字和头像分享给对方，对方手机上会提示是否保存"}

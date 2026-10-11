@@ -5,7 +5,9 @@ MaiBot 交来的 ``raw_message`` 是消息段列表（实测格式见 docs/AUDIT
 - ``image`` / ``emoji``：图片，字节在 ``binary_data_base64`` 里
 - ``reply``：引用回复，``data.target_message_id`` 是被引用消息的编号
 - ``voice``：语音（发语音暂未开放，见能力注册表）
-- ``dict``：``ctx.send.custom`` 发来的自定义内容，外面包了一层
+- ``dict``：插件发来的自定义内容。本插件的特效、投票工具用它做标记：
+  ``{"type": "dict", "data": {"type": "烟花特效", "imessage": {"effect": "fireworks"}}}``。
+  外层的 ``type`` 是给 AI 看的名字（聊天记录里显示成「[烟花特效消息]」），``imessage`` 里才是动作
 图片字节写成临时文件交给侧车，管道里只传路径。
 """
 
@@ -29,6 +31,8 @@ class OutboundPlan:
     reply_to: Optional[str] = None
     temp_files: List[Path] = field(default_factory=list)
     skipped: List[str] = field(default_factory=list)
+    # 消息特效（imessage_send_effect 工具），加在第一段文字上
+    effect: Optional[str] = None
 
     def cleanup(self) -> None:
         for path in self.temp_files:
@@ -121,6 +125,8 @@ def build_outbound_plan(message: Dict[str, Any], media_dir: Path, max_bytes: int
         elif kind == "at":
             # 一对一私聊里 @ 没有意义，直接略过
             continue
+        elif kind == "dict":
+            _apply_imessage_marker(plan, segment.get("data"))
         else:
             plan.skipped.append(kind or "未知段")
 
@@ -128,7 +134,43 @@ def build_outbound_plan(message: Dict[str, Any], media_dir: Path, max_bytes: int
         fallback = str(message.get("processed_plain_text") or "").strip()
         if fallback:
             plan.parts.append({"type": "text", "text": fallback})
+    if plan.effect:
+        text_part = next((part for part in plan.parts if part["type"] == "text"), None)
+        if text_part is None:
+            plan.skipped.append(f"特效 {plan.effect}（没有文字可加）")
+        else:
+            text_part["effect"] = plan.effect
     return plan
+
+
+def _apply_imessage_marker(plan: OutboundPlan, data: Any) -> None:
+    """处理本插件工具放进消息里的 iMessage 动作标记；其他插件的自定义内容记为跳过。"""
+    action = data.get("imessage") if isinstance(data, dict) else None
+    if not isinstance(action, dict):
+        label = data.get("type") if isinstance(data, dict) else None
+        plan.skipped.append(f"自定义内容（{label or '未知'}）")
+        return
+    if isinstance(action.get("effect"), str):
+        plan.effect = action["effect"]
+    elif isinstance(action.get("poll"), dict):
+        poll = action["poll"]
+        options = [str(option) for option in poll.get("options", []) if str(option).strip()]
+        plan.parts.append({"type": "poll", "title": str(poll.get("title") or ""), "options": options})
+    else:
+        plan.skipped.append("未知的 iMessage 动作")
+
+
+_BARE_URL = re.compile(r"https?://[^\s<>\"']+")
+
+
+def apply_link_previews(parts: List[Dict[str, Any]]) -> None:
+    """一段文字整段就是一个链接时，改用链接预览卡片发送（iMessage 会显示网页标题和图片）。"""
+    for index, part in enumerate(parts):
+        if part["type"] != "text" or part.get("effect") or part.get("markdown"):
+            continue
+        text = part["text"].strip()
+        if _BARE_URL.fullmatch(text):
+            parts[index] = {"type": "link", "url": text}
 
 
 def resolve_target(message: Dict[str, Any]) -> str:
