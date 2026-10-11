@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 REPLY_MODE_TEXT = {
     "always": "总是引用",
@@ -29,7 +29,7 @@ class Capability:
     # 怎么接入：tool = AI 调用的工具；auto = 适配器自动完成；inbound = 收消息时自动处理
     kind: str
     is_enabled: Callable[[Any], bool]
-    tool_name: Optional[str] = None
+    tool_names: Tuple[str, ...] = ()
     # 写进能力说明的一句话（只写工具说明里没有的内容）；返回空串表示不需要说明
     ai_note: Callable[[Any], str] = lambda config: ""
     is_configured: Callable[[Any], bool] = lambda config: True
@@ -76,8 +76,17 @@ REGISTRY: Sequence[Capability] = (
         photon_call="message.react",
         plan="free",
         kind="tool",
-        tool_name="imessage_react",
+        tool_names=("imessage_react",),
         is_enabled=lambda c: _caps(c).reactions,
+    ),
+    Capability(
+        key="edit_unsend",
+        title="编辑与撤回",
+        photon_call="message.edit / message.unsend",
+        plan="free",
+        kind="tool",
+        tool_names=("imessage_edit", "imessage_unsend"),
+        is_enabled=lambda c: _caps(c).edit_unsend,
     ),
     Capability(
         key="reply",
@@ -122,16 +131,23 @@ REGISTRY: Sequence[Capability] = (
 )
 
 
+_BY_KEY: Dict[str, Capability] = {cap.key: cap for cap in REGISTRY}
+
+
+def capability(key: str) -> Capability:
+    return _BY_KEY[key]
+
+
 def enabled_capabilities(config: Any) -> List[Capability]:
     return [cap for cap in REGISTRY if cap.enabled(config)]
 
 
 def disabled_tool_names(config: Any) -> set[str]:
-    return {cap.tool_name for cap in REGISTRY if cap.tool_name and not cap.enabled(config)}
+    return {name for cap in REGISTRY if not cap.enabled(config) for name in cap.tool_names}
 
 
 def all_tool_names() -> set[str]:
-    return {cap.tool_name for cap in REGISTRY if cap.tool_name}
+    return {name for cap in REGISTRY for name in cap.tool_names}
 
 
 def build_brief(config: Any) -> str:

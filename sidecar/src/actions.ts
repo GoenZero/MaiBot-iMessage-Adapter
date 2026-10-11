@@ -1,5 +1,5 @@
 /**
- * 出站动作：发送、引用回复、点赞、输入中、标记已读。
+ * 出站动作：发送、引用回复、点赞、编辑、撤回、输入中、标记已读。
  *
  * 每个动作都以 SDK 的实际调用结果为准：
  * - SDK 抛错 → 失败
@@ -18,6 +18,8 @@ export interface ActionMessage extends MessageLike {
   reply?(...content: unknown[]): Promise<unknown>;
   react?(reaction: string): Promise<unknown>;
   read?(): Promise<void>;
+  edit?(content: unknown): Promise<void>;
+  unsend?(): Promise<void>;
 }
 
 /** 对话对象（SDK Space 的最小形状）。 */
@@ -164,6 +166,34 @@ export class Actions {
     if (!isMessage(reaction)) throw new BridgeError("NOT_DELIVERED", "Photon 没有返回点赞结果");
     this.deps.handles.set(reaction.id, reaction);
     return { reaction_id: reaction.id };
+  }
+
+  /** 找到一条自己发出的消息；找不到或不是自己发的都报错。 */
+  private async findOwnMessage(args: Record<string, unknown>, verb: string): Promise<ActionMessage> {
+    const space = await this.deps.resolveSpace(requireString(args, "chat_id"));
+    const messageId = requireString(args, "message_id");
+    const target = await this.findMessage(space, messageId);
+    if (!target) throw new BridgeError("MESSAGE_NOT_FOUND", `找不到消息 ${messageId}，可能太久远或适配器重启过`);
+    if (target.direction !== "outbound") throw new BridgeError("NOT_OWN_MESSAGE", `只能${verb}自己发出的消息`);
+    return target;
+  }
+
+  /** 修改自己发出的一条文字消息（iMessage 限 15 分钟内、最多 5 次，超出时由 Photon 报错）。 */
+  async edit(args: Record<string, unknown>): Promise<Record<string, never>> {
+    const value = requireString(args, "text");
+    const target = await this.findOwnMessage(args, "编辑");
+    if (!target.edit) throw new BridgeError("UNSUPPORTED", "这条消息不能编辑");
+    await target.edit(args.markdown === true ? this.deps.builders.markdown(value) : this.deps.builders.text(value));
+    return {};
+  }
+
+  /** 撤回自己发出的一条消息或一个点赞（消息限 2 分钟内，点赞不限时）。 */
+  async unsend(args: Record<string, unknown>): Promise<Record<string, never>> {
+    const target = await this.findOwnMessage(args, "撤回");
+    if (!target.unsend) throw new BridgeError("UNSUPPORTED", "这条消息不能撤回");
+    await target.unsend();
+    this.deps.handles.delete(target.id);
+    return {};
   }
 
   /** 开始或停止「正在输入」。 */

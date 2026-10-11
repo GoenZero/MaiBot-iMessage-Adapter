@@ -142,6 +142,10 @@ async function dispatch(request: Request): Promise<object> {
       return actions.send(request.args);
     case "react":
       return actions.react(request.args);
+    case "edit":
+      return actions.edit(request.args);
+    case "unsend":
+      return actions.unsend(request.args);
     case "typing":
       return actions.typing(request.args);
     case "mark_read":

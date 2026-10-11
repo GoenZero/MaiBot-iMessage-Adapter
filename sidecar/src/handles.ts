@@ -39,4 +39,8 @@ export class LruCache<V> {
       this.map.delete(oldest.value);
     }
   }
+
+  delete(key: string): void {
+    this.map.delete(key);
+  }
 }

@@ -297,6 +297,15 @@ class CapabilitiesConfig(PluginConfigBase):
             "order": 2,
         },
     )
+    edit_unsend: bool = Field(
+        default=True,
+        description="允许 AI 修改或撤回自己刚发出的消息（iMessage 限制：15 分钟内可改，2 分钟内可撤回），也能撤回自己点过的回应。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Edit & unsend", label_ja="編集と取り消し", label_ko="편집 및 전송 취소"),
+            "label": "编辑与撤回",
+            "order": 6,
+        },
+    )
     reply_mode: Literal["auto", "always", "off"] = Field(
         default="auto",
         description="AI 的回复要不要以「引用对方某句话」的形式发出。auto：AI 自己决定；always：总是引用对方最新一句；off：从不引用。",

@@ -32,8 +32,24 @@ rl.on("line", (line) => {
         frame({ t: "res", id: req.id, ok: true, result: { reaction_id: "rx-" + req.id } });
       }
       break;
-    case "send":
-      frame({ t: "res", id: req.id, ok: true, result: { message_ids: ["out-" + req.id], quoted: Boolean(req.args.reply_to), partial: false } });
+    case "send": {
+      // 每个片段各发成一条，编号 out-<请求号>、out-<请求号>-1……
+      const parts = req.args.parts?.length ? req.args.parts : [null];
+      const ids = parts.map((_, i) => (i === 0 ? `out-${req.id}` : `out-${req.id}-${i}`));
+      frame({ t: "res", id: req.id, ok: true, result: { message_ids: ids, quoted: Boolean(req.args.reply_to), partial: false } });
+      break;
+    }
+    case "edit":
+    case "unsend":
+      if (req.args.message_id === "missing") {
+        frame({ t: "res", id: req.id, ok: false, error: { code: "MESSAGE_NOT_FOUND", message: "找不到" } });
+      } else if (String(req.args.message_id).startsWith("in-")) {
+        frame({ t: "res", id: req.id, ok: false, error: { code: "NOT_OWN_MESSAGE", message: "不是自己的" } });
+      } else if (req.args.message_id === "late") {
+        frame({ t: "res", id: req.id, ok: false, error: { code: "PHOTON_ERROR", message: "unsend window expired" } });
+      } else {
+        frame({ t: "res", id: req.id, ok: true, result: {} });
+      }
       break;
     case "fail":
       frame({ t: "res", id: req.id, ok: false, error: { code: "TARGET_NOT_ALLOWED", message: "Target not allowed" } });

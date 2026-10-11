@@ -12,8 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
 
-from maibot_sdk import Command, HookHandler, MaiBotPlugin, MessageGateway, Tool
-from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder, ToolParameterInfo, ToolParamType
+from maibot_sdk import Command, HookHandler, MaiBotPlugin, MessageGateway
+from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder
 
 import asyncio
 import contextlib
@@ -33,6 +33,7 @@ from .core.outbound import build_outbound_plan, looks_like_markdown, resolve_tar
 from .core.planner import adjust_planner_request
 from .core.sessions import SessionDirectory
 from .core.typing import TypingController
+from .tools import ACTION_TIMEOUT, IMessageToolsMixin
 
 if TYPE_CHECKING:
     from maibot_sdk import PluginConfigBase
@@ -42,16 +43,6 @@ PLATFORM = "imessage"
 SIDECAR_SCRIPT = Path(__file__).resolve().parent / "sidecar" / "dist" / "sidecar.mjs"
 # 侧车发一条消息的最长等待（MaiBot 给网关的上限是 60 秒）
 SEND_TIMEOUT = 45.0
-ACTION_TIMEOUT = 20.0
-
-REACT_DESCRIPTION = (
-    "给对方的某条 iMessage 消息加一个 Tapback 回应，就像在 iPhone 上长按消息选爱心或点赞。"
-    "适合：对方道谢、分享好消息、说了好笑的话，或你想表示认同但不必专门回一句时。"
-    "不要每条消息都点，一轮对话最多点一次；点了回应也可以照常回复。"
-    "kind 可选：love=爱心，like=赞，dislike=踩，laugh=哈哈，emphasize=感叹号（强调），question=问号。"
-)
-TAPBACK_NAMES = {"love": "爱心", "like": "赞", "dislike": "踩", "laugh": "哈哈", "emphasize": "感叹号", "question": "问号"}
-
 _STATE_TEXT = {
     "stopped": "⏹ 未运行",
     "starting": "⏳ 正在启动",
@@ -72,7 +63,7 @@ def normalize_account(raw: str) -> str:
     return ("+" if value.startswith("+") else "") + digits
 
 
-class IMessageAdapterPlugin(MaiBotPlugin):
+class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
     """iMessage 消息网关适配器插件。"""
 
     config_model: ClassVar[type[PluginConfigBase] | None] = IMessageAdapterConfig
@@ -96,6 +87,8 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         # 侧车启动时的连接相关配置，以及最近一次上报给 MaiBot 的机器人号码
         self._active_settings: Optional[Dict[str, Any]] = None
         self._reported_account: Optional[str] = None
+        # 工具要用的记录（AI 发出的消息组、点过的回应）；和侧车的消息缓存同样大小
+        self._init_tool_state(500)
 
     """═══════════════════════════════════════════════
     生命周期
@@ -444,6 +437,7 @@ class IMessageAdapterPlugin(MaiBotPlugin):
         message_ids = [str(x) for x in result.get("message_ids", []) if x]
         if result.get("partial"):
             self.ctx.logger.warning("消息只发出了一部分：%s", message_ids)
+        self._remember_sent(message_ids)
         return {"success": True, "external_message_id": message_ids[0] if message_ids else None}
 
     def _choose_reply_target(self, chat_id: str, requested: Optional[str]) -> Optional[str]:
@@ -462,43 +456,6 @@ class IMessageAdapterPlugin(MaiBotPlugin):
                 return latest
             return None
         return requested
-
-    """═══════════════════════════════════════════════
-    AI 工具
-    ═══════════════════════════════════════════════"""
-
-    @Tool(
-        "imessage_react",
-        description=REACT_DESCRIPTION,
-        parameters=[
-            ToolParameterInfo(name="msg_id", param_type=ToolParamType.STRING, description="要回应的那条消息的 msg_id"),
-            ToolParameterInfo(
-                name="kind",
-                param_type=ToolParamType.STRING,
-                description="回应类型",
-                enum_values=list(TAPBACK_NAMES),
-            ),
-        ],
-        chat_scope="private",
-    )
-    async def tool_react(self, msg_id: str = "", kind: str = "", stream_id: str = "", **kwargs: Any) -> Dict[str, Any]:
-        del kwargs
-        if not self.config.capabilities.reactions:
-            return {"success": False, "error": "点赞回应已在设置里关闭"}
-        supervisor = self._supervisor
-        chat_id = await self._chat_for_stream(stream_id)
-        if supervisor is None or chat_id is None:
-            return {"success": False, "error": "当前不是 iMessage 聊天，不能点赞回应"}
-        if kind not in TAPBACK_NAMES:
-            return {"success": False, "error": f"kind 只能是 {', '.join(TAPBACK_NAMES)}"}
-        try:
-            await supervisor.request("react", {"chat_id": chat_id, "message_id": msg_id, "kind": kind}, timeout=ACTION_TIMEOUT)
-        except SidecarError as exc:
-            self.ctx.logger.warning("点赞回应失败 %s", exc)
-            if exc.code == "MESSAGE_NOT_FOUND":
-                return {"success": False, "error": "找不到这条消息（可能太久远，或适配器重启过），这次没点成"}
-            return {"success": False, "error": f"这次没点成：{exc.message}"}
-        return {"success": True, "content": f"已给这条消息点了「{TAPBACK_NAMES[kind]}」"}
 
     """═══════════════════════════════════════════════
     管理命令

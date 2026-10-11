@@ -130,3 +130,27 @@ test("输入中开始与停止", async () => {
   assert.deepEqual(calls.map((c) => c.op), ["startTyping", "stopTyping"]);
   await assert.rejects(actions.typing({ chat_id: "+1", state: "maybe" }), { code: "BAD_REQUEST" });
 });
+
+test("编辑与撤回：只能操作自己发出的消息，找不到时明确报错", async () => {
+  const { actions, handles } = setup();
+  const edits: unknown[] = [];
+  let unsent = 0;
+  handles.set("out-1", {
+    ...sentMessage("out-1"),
+    edit: async (content) => void edits.push(content),
+    unsend: async () => void unsent++,
+  });
+  handles.set("in-1", { id: "in-1", content: { type: "text", text: "对方的话" }, direction: "inbound", edit: async () => {}, unsend: async () => {} });
+
+  await actions.edit({ chat_id: "+1", message_id: "out-1", text: "改好了" });
+  await actions.edit({ chat_id: "+1", message_id: "out-1", text: "**改好了**", markdown: true });
+  assert.deepEqual(edits, [{ kind: "text", value: "改好了" }, { kind: "markdown", value: "**改好了**" }]);
+
+  await assert.rejects(actions.edit({ chat_id: "+1", message_id: "in-1", text: "x" }), { code: "NOT_OWN_MESSAGE" });
+  await assert.rejects(actions.unsend({ chat_id: "+1", message_id: "in-1" }), { code: "NOT_OWN_MESSAGE" });
+  await assert.rejects(actions.unsend({ chat_id: "+1", message_id: "nope" }), { code: "MESSAGE_NOT_FOUND" });
+
+  await actions.unsend({ chat_id: "+1", message_id: "out-1" });
+  assert.equal(unsent, 1);
+  assert.equal(handles.get("out-1"), undefined); // 撤回后从缓存里移除
+});

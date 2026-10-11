@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import asyncio
+import base64
 import copy
 import os
 import shutil
@@ -209,6 +210,69 @@ def test_react_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     reacts = [op for op in sidecar_ops(tmp_path) if op["op"] == "react"]
     assert reacts[0]["args"] == {"chat_id": "+1", "message_id": "m1", "kind": "love"}
     assert len(reacts) == 2
+
+
+def test_react_can_be_removed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        never = await plugin.tool_react(msg_id="m1", kind="love", remove=True, stream_id="s-imessage")
+        assert never["success"] is False and "没找到你给这条消息点过的「爱心」" in never["error"]
+        await plugin.tool_react(msg_id="m1", kind="love", stream_id="s-imessage")
+        removed = await plugin.tool_react(msg_id="m1", kind="love", remove=True, stream_id="s-imessage")
+        assert removed == {"success": True, "content": "已撤回给这条消息点的「爱心」"}
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    unsends = [op for op in sidecar_ops(tmp_path) if op["op"] == "unsend"]
+    assert len(unsends) == 1 and unsends[0]["args"]["message_id"].startswith("rx-")
+
+
+def test_edit_and_unsend_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 32).decode()
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        # 一条文字加图片的回复，会发成两条 iMessage
+        sent = await plugin.send_to_imessage(
+            {
+                "raw_message": [{"type": "text", "data": "看这张"}, {"type": "image", "binary_data_base64": png}],
+                "message_info": {"additional_config": {"platform_io_target_user_id": "+1"}},
+            }
+        )
+        first = sent["external_message_id"]
+
+        edited = await plugin.tool_edit(msg_id=first, text="**改好了**", stream_id="s-imessage")
+        assert edited == {"success": True, "content": "已把这条消息改成：**改好了**"}
+        empty = await plugin.tool_edit(msg_id=first, text="  ", stream_id="s-imessage")
+        assert empty["success"] is False
+        not_mine = await plugin.tool_edit(msg_id="in-1", text="x", stream_id="s-imessage")
+        assert "只能改你自己发的消息" in not_mine["error"]
+        late = await plugin.tool_unsend(msg_id="late", stream_id="s-imessage")
+        assert late["success"] is False and "unsend window expired" in late["error"]
+
+        unsent = await plugin.tool_unsend(msg_id=first, stream_id="s-imessage")
+        assert unsent == {"success": True, "content": "已撤回这条消息"}
+
+        # 关掉开关后工具拒绝执行
+        data = plugin.get_plugin_config_data()
+        data["capabilities"]["edit_unsend"] = False
+        plugin.set_plugin_config(data)
+        off = await plugin.tool_unsend(msg_id=first, stream_id="s-imessage")
+        assert off["success"] is False and "已在设置里关闭" in off["error"]
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    ops = sidecar_ops(tmp_path)
+    edit = next(op for op in ops if op["op"] == "edit")
+    assert edit["args"]["markdown"] is True
+    unsends = [op["args"]["message_id"] for op in ops if op["op"] == "unsend" and op["args"]["message_id"] != "late"]
+    # 两部分都撤回，后发的先撤
+    assert unsends[0].endswith("-1") and unsends[1] == unsends[0][:-2]
 
 
 def test_read_receipts_follow_toggle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
