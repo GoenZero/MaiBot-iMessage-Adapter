@@ -256,6 +256,13 @@ test("语音：开启转文字时下载（失败会重试），未开启时只�
   assert.equal((stuck.data.parts[0] as { note?: string }).note, "download_failed");
 });
 
+test("对方发起的投票没有标题时，只列选项", async () => {
+  const { UNTITLED_POLL } = await import("./polls.ts");
+  const result = await convertInbound(msg("POLL-9", { type: "poll", title: UNTITLED_POLL, options: [{ title: "海边" }, { title: "爬山" }] }), options());
+  assert.ok(result.kind === "message");
+  assert.deepEqual(result.data.parts, [{ type: "poll", title: "", options: ["海边", "爬山"] }]);
+});
+
 test("投票没有标题时（Photon 实测如此），用 AI 发起时记下的标题补回", async () => {
   const { rememberSentPoll, UNTITLED_POLL } = await import("./polls.ts");
 

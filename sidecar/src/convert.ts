@@ -306,7 +306,9 @@ async function convertContent(
       const options = Array.isArray(content.options)
         ? content.options.map((o) => str((o as { title?: unknown } | null)?.title)).filter((t): t is string => Boolean(t))
         : [];
-      return { parts: [{ type: "poll", title: str(content.title) ?? "", options }] };
+      // Photon 送来的投票没有标题（见 polls.ts）
+      const title = str(content.title);
+      return { parts: [{ type: "poll", title: title && title !== UNTITLED_POLL ? title : "", options }] };
     }
 
     case "effect": {

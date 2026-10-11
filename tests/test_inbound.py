@@ -108,3 +108,10 @@ def test_text_file_content_goes_to_ai(tmp_path):
     assert "只显示了前 6000 个字" in text
     assert "超大.log" in text and "太大，没有读取内容" in text
     assert not md.exists() and not gbk.exists() and not big.exists()  # 临时文件读完即删
+
+
+def test_untitled_poll_lists_options_only():
+    from imessage_adapter_under_test.core.inbound import describe_part
+
+    assert describe_part({"type": "poll", "title": "", "options": ["海边", "爬山"]}) == "[投票] 海边 / 爬山"
+    assert describe_part({"type": "poll", "title": "去哪", "options": ["海边"]}) == "[投票] 去哪：海边"

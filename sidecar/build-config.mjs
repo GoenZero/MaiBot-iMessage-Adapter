@@ -34,7 +34,7 @@ export function bundledGrpcPeersPlugin(stats) {
 export const UNTITLED_POLL = "__imessage_untitled_poll__";
 
 /**
- * 对 @spectrum-ts/imessage 的两处修补（真机第二轮发现），都在打包时完成，找不到要改的代码时让打包失败：
+ * 对 @spectrum-ts/imessage 的三处修补（真机测试发现），都在打包时完成，找不到要改的代码时让打包失败：
  *
  * 1. 投票标题：Photon 送回来的投票（包括 AI 自己发起的）标题是空的，而 SDK 缓存投票时要求标题非空，
  *    缓存失败后对方的投票事件全部被丢掉。让空标题变成 UNTITLED_POLL，侧车再把真正的标题补回来
@@ -42,6 +42,8 @@ export const UNTITLED_POLL = "__imessage_untitled_poll__";
  * 2. 对方编辑、撤回消息、取消点赞：Photon 的消息流里有这三种事件（message.edited / message.unsent /
  *    message.reactionRemoved），但 SDK 不转发，只记一条调试日志。这里把它们转成 custom 内容
  *    （raw.imessage_change 标明是哪种），侧车再变成控制事件（见 src/convert.ts）。机器人自己的操作不转发。
+ * 3. 对方发起投票：SDK 只把投票记进缓存，不转发（真机第三轮发现，AI 看不到对方发起的投票）。
+ *    这里把「投票已创建」转成一条普通的投票消息。机器人自己发起的投票在外层已经被过滤掉。
  */
 const CHANGE_FORWARDER = `
 	if (event.type === "message.edited" || event.type === "message.unsent" || event.type === "message.reactionRemoved") {
@@ -64,7 +66,22 @@ const CHANGE_FORWARDER = `
 	}
 `;
 
-/** 对 @spectrum-ts/imessage/dist/index.js 的源码做上面两处修补；找不到要改的代码时抛错。 */
+const POLL_CREATED_FORWARDER = `
+	if (event.delta.type === "created") {
+		const created = pollCache.get(event.pollMessageGuid);
+		if (!created) return [];
+		const peer = dmPeerFromChatGuid(event.chatGuid);
+		return [{
+			id: event.pollMessageGuid,
+			sender: peer ? { id: peer, address: peer } : toSenderRef(event.actor),
+			space: { id: event.chatGuid, type: chatTypeFromGuid(event.chatGuid), phone },
+			timestamp: event.occurredAt,
+			content: created.poll
+		}];
+	}
+`;
+
+/** 对 @spectrum-ts/imessage/dist/index.js 的源码做上面几处修补；找不到要改的代码时抛错。 */
 export function patchImessageSource(source, stats = {}) {
   const withPollFix = source.replace(
     /(const toCachedPoll = \(input\) => \{\s*const poll = asPoll\(\{\s*title: )input\.title,/,
@@ -80,7 +97,14 @@ export function patchImessageSource(source, stats = {}) {
     throw new Error(`无法修补 toMessageItem（锚点出现 ${parts.length - 1} 次），请检查 @spectrum-ts/imessage 是否改了实现`);
   }
   stats.changePatched = (stats.changePatched ?? 0) + 1;
-  return parts[0] + CHANGE_FORWARDER + anchor + parts[1];
+  const withChanges = parts[0] + CHANGE_FORWARDER + anchor + parts[1];
+  const pollAnchor = "const toPollDeltaMessages = async (client, pollCache, event, phone) => {";
+  const pollParts = withChanges.split(pollAnchor);
+  if (pollParts.length !== 2) {
+    throw new Error(`无法修补 toPollDeltaMessages（锚点出现 ${pollParts.length - 1} 次），请检查 @spectrum-ts/imessage 是否改了实现`);
+  }
+  stats.pollCreatedPatched = (stats.pollCreatedPatched ?? 0) + 1;
+  return pollParts[0] + pollAnchor + POLL_CREATED_FORWARDER + pollParts[1];
 }
 
 export function imessagePatchesPlugin(stats) {

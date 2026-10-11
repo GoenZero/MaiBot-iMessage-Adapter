@@ -71,13 +71,13 @@ test("打包产物里，投票的空标题会换成占位标题（否则对方�
   assert.match(bundled, new RegExp(`toCachedPoll=.{0,60}title:\\w+\\.title\\|\\|${JSON.stringify(UNTITLED_POLL)}`));
 });
 
-test("修补后，对方的编辑、撤回、取消点赞会被转发（机器人自己的不转发）", async () => {
+test("修补后，对方的编辑、撤回、取消点赞、发起的投票会被转发（机器人自己的不转发）", async () => {
   const { patchImessageSource } = await import("../build-config.mjs");
   const dist = join(here, "..", "node_modules", "@spectrum-ts", "imessage", "dist");
   const patchedFile = join(dist, `.patched-test-${process.pid}.js`);
   const source = readFileSync(join(dist, "index.js"), "utf8");
   // 放在原文件旁边，相对导入才能解析；末尾导出内部函数供测试调用
-  writeFileSync(patchedFile, `${patchImessageSource(source)}\nexport { toMessageItem as __toMessageItem };\n`);
+  writeFileSync(patchedFile, `${patchImessageSource(source)}\nexport { toMessageItem as __toMessageItem, toPollItem as __toPollItem };\n`);
   try {
     const { __toMessageItem: toMessageItem } = await import(patchedFile);
     const base = { chatGuid: "any;-;+15550001111", isFromMe: false, occurredAt: new Date(0), sequence: 7, messageGuid: "GUID-1" };
@@ -96,6 +96,23 @@ test("修补后，对方的编辑、撤回、取消点赞会被转发（机器�
     assert.equal(removed.values[0].content.raw.reaction, "❤️");
     const mine = await toMessageItem({}, { ...base, isFromMe: true, type: "message.unsent" }, "shared", "c4");
     assert.deepEqual(mine.values, []);
+
+    // 对方发起投票（Photon 送来的标题是空的），随后自己投了一票
+    const { __toPollItem: toPollItem } = await import(patchedFile);
+    const { UNTITLED_POLL } = await import("../build-config.mjs");
+    const cache = new Map();
+    const poll = { type: "poll.changed", pollMessageGuid: "POLL-1", chatGuid: base.chatGuid, isFromMe: false, occurredAt: new Date(0), actor: { address: "+15550001111" } };
+    const options = [{ optionIdentifier: "a", text: "海边" }, { optionIdentifier: "b", text: "爬山" }];
+    const created = await toPollItem({}, cache, { ...poll, sequence: 1, delta: { type: "created", title: "", options } }, "shared", "p1");
+    assert.equal(created.values.length, 1);
+    assert.equal(created.values[0].id, "POLL-1");
+    assert.deepEqual(created.values[0].content, { type: "poll", title: UNTITLED_POLL, options: [{ title: "海边" }, { title: "爬山" }] });
+    const voted = await toPollItem({}, cache, { ...poll, sequence: 2, delta: { type: "voted", optionIdentifier: "b" } }, "shared", "p2");
+    assert.equal(voted.values[0].content.type, "poll_option");
+    assert.equal(voted.values[0].content.option.title, "爬山");
+    // 机器人自己发起的投票不当成对方的消息
+    const ownPoll = await toPollItem({}, new Map(), { ...poll, isFromMe: true, sequence: 3, delta: { type: "created", title: "", options } }, "shared", "p3");
+    assert.deepEqual(ownPoll.values, []);
   } finally {
     rmSync(patchedFile, { force: true });
   }

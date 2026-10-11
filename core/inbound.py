@@ -123,7 +123,8 @@ def describe_part(part: Dict[str, Any]) -> str:
         return f"[应用卡片] {detail}".rstrip()
     if kind == "poll":
         options = " / ".join(part.get("options") or [])
-        return f"[投票] {part.get('title', '')}：{options}".rstrip("：")
+        title = str(part.get("title") or "").strip()
+        return f"[投票] {title}：{options}".rstrip("：") if title else f"[投票] {options}".rstrip()
     if kind == "effect":
         effect = str(part.get("effect", ""))
         return f"[{EFFECT_NAMES.get(effect, effect)}特效]"
