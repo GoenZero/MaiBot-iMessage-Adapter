@@ -15,6 +15,7 @@ import type { LruCache } from "./handles.ts";
 import { readOutboundFile } from "./media.ts";
 import { BridgeError, optionalString, requireString } from "./protocol.ts";
 import { rememberSentPoll } from "./polls.ts";
+import { Lanes } from "./lanes.ts";
 import { unsupportedMark, unsupportedSince } from "./sdklog.ts";
 
 /** 可操作的消息对象（SDK Message 的最小形状）。 */
@@ -105,6 +106,9 @@ export function bundledPlaceSticker(): PlaceSticker | undefined {
   return typeof hook === "function" ? (hook as PlaceSticker) : undefined;
 }
 
+/** 需要检查「不支持」警告的动作最多独占多久（毫秒）；比 Python 端最长的等待（60 秒）略长 */
+const CHECKED_HOLD_LIMIT_MS = 90_000;
+
 export interface ActionDeps {
   resolveSpace(chatId: string): Promise<SpaceLike>;
   /** 测试时可替换；默认用打包补丁登记的实现 */
@@ -144,6 +148,8 @@ function toMessageList(result: unknown): ActionMessage[] {
 
 export class Actions {
   private readonly deps: ActionDeps;
+
+  private readonly checked = new Lanes(CHECKED_HOLD_LIMIT_MS);
 
   constructor(deps: ActionDeps) {
     this.deps = deps;
@@ -275,10 +281,14 @@ export class Actions {
    * SDK 对不支持的操作只记警告不抛错，不检查的话会误报成功。
    */
   private async fireAndCheck(subjects: string[], run: () => Promise<unknown>): Promise<void> {
-    const mark = unsupportedMark();
-    await run();
-    const reason = unsupportedSince(mark, subjects);
-    if (reason) throw new BridgeError("UNSUPPORTED", reason);
+    // 「不支持」警告是全局的，分不清是哪个动作发的；所以这类动作一次只执行一个，
+    // 否则一个动作的警告会被算到同时进行的另一个头上（外部审查发现）
+    await this.checked.run("check", async () => {
+      const mark = unsupportedMark();
+      await run();
+      const reason = unsupportedSince(mark, subjects);
+      if (reason) throw new BridgeError("UNSUPPORTED", reason);
+    });
   }
 
   /** 修改自己发出的一条文字消息（iMessage 限 15 分钟内、最多 5 次，超出时由 Photon 报错）。改后按纯文字显示。 */

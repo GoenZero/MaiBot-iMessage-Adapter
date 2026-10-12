@@ -28,6 +28,7 @@ import {
   type MessageLike,
 } from "./convert.ts";
 import { LruCache } from "./handles.ts";
+import { Lanes } from "./lanes.ts";
 import { safeExtension, saveToTempFile, type StreamSource } from "./media.ts";
 import { BridgeError, classifyError, parseRequest, PROTOCOL_VERSION, type Request } from "./protocol.ts";
 
@@ -135,6 +136,20 @@ async function shutdown(code: number): Promise<never> {
   process.exit(code);
 }
 
+/**
+ * 同一个聊天里改变对方所见内容的操作，按收到的顺序一个一个执行（外部审查发现：并发处理时，
+ * 先提交的图片要读文件，后提交的文字会抢先发出）。「正在输入」和「已读」不用排队。
+ * Python 端最长等 60 秒，一个操作最多挡住后面 90 秒。
+ */
+const ORDERED_OPS = new Set(["send", "react", "edit", "unsend", "background", "share_contact", "place_sticker"]);
+const chatLanes = new Lanes(90_000);
+
+function dispatchInOrder(request: Request): Promise<object> {
+  const chatId = request.args?.chat_id;
+  if (!ORDERED_OPS.has(request.op) || typeof chatId !== "string") return dispatch(request);
+  return chatLanes.run(chatId, () => dispatch(request));
+}
+
 async function dispatch(request: Request): Promise<object> {
   switch (request.op) {
     case "ping":
@@ -175,8 +190,8 @@ input.on("line", (line) => {
     log("WARN", `收到无法解析的请求：${classifyError(error).message}`);
     return;
   }
-  // 请求并发处理；同一会话的发送顺序由 Python 端逐条等待回执来保证
-  dispatch(request).then(
+  // 不同聊天的请求并发处理；同一个聊天的发送类操作按顺序排队（见 dispatchInOrder）
+  dispatchInOrder(request).then(
     (result) => writeFrame({ imsg: PROTOCOL_VERSION, t: "res", id: request.id, ok: true, result }),
     (error: unknown) => {
       const info = classifyError(error);

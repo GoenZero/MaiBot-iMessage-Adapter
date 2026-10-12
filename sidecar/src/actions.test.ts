@@ -240,3 +240,29 @@ test("贴贴纸：图片只能来自临时目录，找不到消息时报错，�
   await assert.rejects(actions.placeSticker({ chat_id: "+1", message_id: "in-1", path: "/etc/passwd" }));
   await assert.rejects(make(() => undefined).placeSticker({ chat_id: "+1", message_id: "in-1", path: file }), { code: "UNSUPPORTED" });
 });
+
+test("同时进行的两个撤回，一个的「不支持」警告不会算到另一个头上", async () => {
+  const { actions, handles } = setup(() => undefined);
+  let slowDone = false;
+  handles.set("slow", {
+    ...sentMessage("slow"),
+    unsend: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      slowDone = true;
+    },
+  });
+  handles.set("skipped", {
+    ...sentMessage("skipped"),
+    unsend: async () =>
+      void trackUnsupported(["[spectrum.platform]", "WARN", 'imessage does not support action "unsend": too late; skipping.', {}]),
+  });
+  const [slow, skipped] = await Promise.allSettled([
+    actions.unsend({ chat_id: "+1", message_id: "slow" }),
+    actions.unsend({ chat_id: "+1", message_id: "skipped" }),
+  ]);
+  assert.equal(slow.status, "fulfilled");
+  assert.ok(slowDone);
+  assert.equal(handles.get("slow"), undefined);
+  assert.equal(skipped.status, "rejected");
+  assert.equal((skipped as PromiseRejectedResult).reason.code, "UNSUPPORTED");
+});
