@@ -701,3 +701,30 @@ def test_place_sticker_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     op = next(op for op in sidecar_ops(tmp_path) if op["op"] == "place_sticker")
     assert op["args"]["message_id"] == "m1" and op["args"]["name"] == "sticker.png"
     assert not Path(op["args"]["path"]).exists()  # 临时文件用完即删
+
+
+def test_placed_sticker_uses_target_for_read_and_quote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        await plugin._handle_inbound_message(
+            {
+                "message_id": "BOT-1:message.stickerPlaced:9",
+                "chat_id": "any;-;+1",
+                "sender_id": "+1",
+                "timestamp": 0,
+                "parts": [{"type": "sticker"}],
+                "reply_to": {"message_id": "BOT-1", "text": "晚安"},
+                "quotable": False,
+            }
+        )
+        while plugin._background:
+            await asyncio.sleep(0.01)
+        assert plugin._last_inbound["any;-;+1"] == "BOT-1"
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    reads = [op["args"]["message_id"] for op in sidecar_ops(tmp_path) if op["op"] == "mark_read"]
+    assert reads == ["BOT-1"]

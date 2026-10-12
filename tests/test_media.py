@@ -121,3 +121,15 @@ def test_sticker_is_small_png_and_animated_gif_is_kept() -> None:
     frames[0].save(gif, format="GIF", save_all=True, append_images=frames[1:], duration=100, loop=0)
     kept, ext = prepare_sticker(gif.getvalue())
     assert ext == ".gif" and kept == gif.getvalue()  # 动图原样保留
+
+
+
+def test_transparent_heic_sticker_stays_transparent() -> None:
+    # Memoji、照片抠出来的贴纸是带透明的 HEIC：转成 PNG，不能变成黑底 JPEG
+    pillow_heif.register_heif_opener()
+    buffer = io.BytesIO()
+    Image.new("RGBA", (300, 300), (255, 0, 0, 0)).save(buffer, format="HEIF", quality=80)
+    data, mime = prepare_image(buffer.getvalue(), "image/heic", max_edge=2048)
+    image = decode(data)
+    assert mime == "image/png" and image.mode == "RGBA"
+    assert image.getpixel((10, 10))[3] == 0

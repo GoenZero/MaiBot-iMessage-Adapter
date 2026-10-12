@@ -145,3 +145,10 @@ def test_sticker_goes_to_maibot_emoji_system():
     assert build_maibot_message(mixed, loader_ok)["is_emoji"] is False
     missing = dict(sticker, parts=[{"type": "sticker"}])
     assert build_maibot_message(missing, loader_ok)["raw_message"] == [{"type": "text", "data": "[贴纸]"}]
+
+
+
+def test_text_effect_without_text():
+    from imessage_adapter_under_test.core.inbound import describe_part
+
+    assert describe_part({"type": "text_effect", "effect": "explode", "text": ""}) == "[文字效果「爆炸」]"

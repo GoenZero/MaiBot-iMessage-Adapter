@@ -64,8 +64,8 @@ const CHANGE_FORWARDER = `
 				part_index: event.targetPartIndex,
 				sticker: event.sticker ? asAttachment({
 					id: event.sticker.guid,
-					name: event.sticker.fileName,
-					mimeType: normalizeAppleAttachmentMimeType(event.sticker),
+					name: event.sticker.fileName || "sticker",
+					mimeType: normalizeAppleAttachmentMimeType(event.sticker) || "image/png",
 					size: event.sticker.totalBytes,
 					read: () => downloadPrimaryAttachment(client, event.sticker.guid),
 					stream: async () => downloadPrimaryAttachmentStream(client, event.sticker.guid)

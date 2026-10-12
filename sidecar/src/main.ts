@@ -20,6 +20,7 @@ import { createInterface } from "node:readline";
 import { Actions, type ActionMessage, type SpaceLike, sdkBuilders } from "./actions.ts";
 import {
   collectMessages,
+  isForwardedChange,
   type ContentLike,
   type ConvertOptions,
   convertInbound,
@@ -237,7 +238,9 @@ try {
     markLinkHealthy(emitLink);
     spaces.set(space.id, space as unknown as SpaceLike);
     const message = rawMessage as unknown as MessageLike;
-    for (const item of collectMessages(message)) handles.set(item.id, item as ActionMessage);
+    if (!isForwardedChange(message)) {
+      for (const item of collectMessages(message)) handles.set(item.id, item as ActionMessage);
+    }
     // 断线重连时 SDK 可能重放事件，按编号去重
     if (seen.has(message.id)) continue;
     seen.set(message.id, true);

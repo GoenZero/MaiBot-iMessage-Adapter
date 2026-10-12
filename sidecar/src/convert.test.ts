@@ -375,3 +375,33 @@ test("贴纸：单独发的贴纸标成贴纸；贴在消息上的贴纸变成�
   assert.ok(noImage.kind === "message");
   assert.deepEqual(noImage.data.parts, [{ type: "sticker" }]);
 });
+
+test("组合消息的每一项都复制了整条消息的附加字段：特效只报一次，文字效果按原始正文截取", async () => {
+  const extras = {
+    expressiveSendStyleId: "com.apple.messages.effect.CKConfettiEffect",
+    nativeText: "hello￼",
+    formatting: [{ type: "effect", effectName: "shake", start: 0, length: 5 }],
+    attachmentMetadata: [{ guid: "att-p.jpg", isSticker: false }],
+  };
+  const items = [
+    { ...msg("p:0/g", { type: "text", text: "hello" }), ...extras },
+    { ...msg("p:1/g", image("p.jpg")), ...extras },
+  ];
+  const result = await convertInbound({ ...msg("g", { type: "group", items }), ...extras }, options());
+  assert.ok(result.kind === "message");
+  const effects = result.data.parts.filter((p) => p.type === "effect" || p.type === "text_effect");
+  assert.deepEqual(effects, [
+    { type: "effect", effect: "com.apple.messages.effect.CKConfettiEffect" },
+    { type: "text_effect", effect: "shake", text: "hello" },
+  ]);
+});
+
+test("贴在消息上的贴纸标成不可引用（编号是拼出来的），也不进句柄缓存", async () => {
+  const { isForwardedChange } = await import("./convert.ts");
+  const placed = msg("X:message.stickerPlaced:1", { type: "custom", raw: { imessage_change: "message.stickerPlaced", message_guid: "X" } });
+  const result = await convertInbound(placed, options());
+  assert.ok(result.kind === "message");
+  assert.equal(result.data.quotable, false);
+  assert.equal(isForwardedChange(placed), true);
+  assert.equal(isForwardedChange(msg("n", { type: "text", text: "hi" })), false);
+});

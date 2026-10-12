@@ -29,6 +29,8 @@ export interface MessageLike {
   expressiveSendStyleId?: string;
   /** 文字格式：粗体、斜体……以及 iOS 18 文字效果（effectName） */
   formatting?: readonly { type?: string; effectName?: string; start: number; length: number }[];
+  /** 原始正文（图片等附件处是占位符 U+FFFC）；文字效果的位置按它算 */
+  nativeText?: string;
   /** 每个附件的元数据，isSticker 表示是贴纸 */
   attachmentMetadata?: readonly { guid?: string; isSticker?: boolean }[];
 }
@@ -60,6 +62,8 @@ export interface InboundMessage {
   sender_id: string;
   timestamp: number;
   parts: InboundPart[];
+  /** false 表示这条消息的编号不能用来引用、点赞（例如贴在消息上的贴纸） */
+  quotable?: boolean;
   reply_to?: ReplyRef;
 }
 
@@ -471,16 +475,14 @@ function changeEvent(content: ContentLike, options: ConvertOptions): ControlEven
   return { type: "other", content_type: kind };
 }
 
-/** 附加字段里标着贴纸的附件编号（组合消息的每一项各自带字段）。 */
-function stickerIdsOf(message: MessageLike, depth = 0, found = new Set<string>()): Set<string> {
+/**
+ * 附加字段里标着贴纸的附件编号。spectrum-ts 给组合消息的每一项都复制了整条消息的附加字段，
+ * 所以只看最外层就够了。
+ */
+function stickerIdsOf(message: MessageLike): Set<string> {
+  const found = new Set<string>();
   for (const meta of message.attachmentMetadata ?? []) {
     if (meta.isSticker && meta.guid) found.add(meta.guid);
-  }
-  if (depth < MAX_DEPTH && message.content?.type === "group" && Array.isArray(message.content.items)) {
-    for (const item of message.content.items) {
-      const inner = asMessage(item);
-      if (inner) stickerIdsOf(inner, depth + 1, found);
-    }
   }
   return found;
 }
@@ -525,11 +527,13 @@ async function placedSticker(
       timestamp: meta.timestamp,
       parts: [part],
       reply_to: replyTo,
+      // 编号是补丁拼出来的，Photon 不认识：不能被引用、点赞或标已读，要用被贴的那条消息
+      quotable: false,
     },
   };
 }
 
-/** 消息正文（文字、引用回复里的文字）；文字效果的位置按它来算。 */
+/** 消息正文（文字、引用回复里的文字）；没有原始正文时用它。 */
 function plainText(content: ContentLike | undefined, depth = 0): string {
   if (!content || depth > MAX_DEPTH) return "";
   if (typeof content.text === "string") return content.text;
@@ -537,26 +541,30 @@ function plainText(content: ContentLike | undefined, depth = 0): string {
   return "";
 }
 
+/** iMessage 正文里图片、附件的占位符 */
+const OBJECT_PLACEHOLDER = /\uFFFC/g;
+
 /**
  * 对方用的特效：spectrum-ts 收消息时不会把特效包成 effect 内容，只把编号放在消息的附加字段上
- * （真机第三轮发现：之前 AI 根本看不到特效）。组合消息的每一项各自带字段，也要看。
+ * （真机第三轮发现：之前 AI 根本看不到特效）。
+ *
+ * 只看最外层：组合消息的每一项都复制了整条消息的附加字段，逐项看会重复报好几次。
+ * 文字效果的位置是按原始正文（nativeText，图片处有占位符）算的，所以按它来截取。
  */
-function messageEffects(message: MessageLike, depth = 0): InboundPart[] {
+function messageEffects(message: MessageLike): InboundPart[] {
   const found: InboundPart[] = [];
   const effect = str(message.expressiveSendStyleId);
   if (effect) found.push({ type: "effect", effect });
-  const text = plainText(message.content);
+  const text = typeof message.nativeText === "string" ? message.nativeText : plainText(message.content);
+  const seen = new Set<string>();
   for (const format of message.formatting ?? []) {
     const name = str(format.effectName);
     if (!name) continue; // 粗体、斜体等普通格式不用告诉 AI
-    const piece = text.slice(format.start, format.start + format.length).trim();
-    found.push({ type: "text_effect", effect: name, text: piece || text.trim() });
-  }
-  if (depth < MAX_DEPTH && message.content?.type === "group" && Array.isArray(message.content.items)) {
-    for (const item of message.content.items) {
-      const inner = asMessage(item);
-      if (inner) found.push(...messageEffects(inner, depth + 1));
-    }
+    const piece = text.slice(format.start, format.start + format.length).replace(OBJECT_PLACEHOLDER, "").trim();
+    const key = `${name}|${piece}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    found.push({ type: "text_effect", effect: name, text: piece });
   }
   return found;
 }
@@ -600,6 +608,12 @@ export async function convertInbound(message: MessageLike, options: ConvertOptio
   };
   if (replyTo) data.reply_to = replyTo;
   return { kind: "message", data };
+}
+
+/** 打包补丁转发来的变化（编辑、撤回、贴纸……）：编号是拼出来的，不能放进句柄缓存。 */
+export function isForwardedChange(message: MessageLike): boolean {
+  if (message.content?.type !== "custom") return false;
+  return typeof (message.content.raw as { imessage_change?: unknown } | undefined)?.imessage_change === "string";
 }
 
 /** 收集一条消息里所有可被引用、点赞的子消息（组合消息的每一项也算）。 */

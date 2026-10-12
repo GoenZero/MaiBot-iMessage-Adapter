@@ -419,10 +419,15 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         if not accepted:
             self.ctx.logger.debug("MaiBot 未接收入站消息：%s", message_id)
             return
-        if chat_id and message_id:
-            self._last_inbound[chat_id] = message_id
-        if self.config.capabilities.read_receipts and chat_id and message_id:
-            self._spawn(self._mark_read(chat_id, message_id))
+        # 贴在消息上的贴纸，编号是侧车拼出来的，Photon 不认识：引用、标已读都用被贴的那条消息
+        handle_id = message_id
+        if data.get("quotable") is False:
+            reply_to = data.get("reply_to") if isinstance(data.get("reply_to"), dict) else {}
+            handle_id = str(reply_to.get("message_id") or "")
+        if chat_id and handle_id:
+            self._last_inbound[chat_id] = handle_id
+        if self.config.capabilities.read_receipts and chat_id and handle_id:
+            self._spawn(self._mark_read(chat_id, handle_id))
 
     async def _send_typing(self, chat_id: str, state: str) -> None:
         supervisor = self._supervisor

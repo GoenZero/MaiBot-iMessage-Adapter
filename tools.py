@@ -17,7 +17,6 @@ from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 import asyncio
 import base64
-import binascii
 import json
 import re
 import secrets
@@ -434,12 +433,12 @@ class IMessageToolsMixin:
         try:
             raw = base64.b64decode(str(emoji["base64"]), validate=False)
             data, extension = await asyncio.to_thread(prepare_sticker, raw)
-        except (binascii.Error, ValueError, OSError) as exc:
+        except Exception as exc:  # noqa: BLE001 - 解码失败、图片损坏、图片过大（DecompressionBombError）都只告诉 AI
             self.ctx.logger.warning("iMessage 工具：表情包图片处理失败 %s", exc)
             return {"success": False, "error": "这张表情包的图片处理失败，这次没贴成"}
         path = self._media_dir / f"sticker-{secrets.token_hex(8)}{extension}"
-        await asyncio.to_thread(path.write_bytes, data)
         try:
+            await asyncio.to_thread(path.write_bytes, data)
             await self._sidecar_call(
                 "place_sticker",
                 {"chat_id": chat_id, "message_id": msg_id, "path": str(path), "name": f"sticker{extension}"},

@@ -84,8 +84,10 @@ def prepare_image(
         working = ImageOps.exif_transpose(image) or image
 
         output = io.BytesIO()
-        if working.mode in ("RGBA", "LA", "P") and not heif and mime == "image/png":
-            # 带透明的 PNG 保持 PNG。压缩级别用 3：比默认的 6 快几倍，体积只大一点
+        has_alpha = working.mode in ("RGBA", "LA") or (working.mode == "P" and "transparency" in working.info)
+        if has_alpha:
+            # 带透明的图（透明 PNG，以及 Memoji、照片抠出来的贴纸这类带透明的 HEIC）存成 PNG，
+            # 转 JPEG 会让透明背景变黑。压缩级别用 3：比默认的 6 快几倍，体积只大一点
             working.save(output, format="PNG", compress_level=3)
             result = output.getvalue(), "image/png"
         else:

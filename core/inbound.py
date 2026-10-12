@@ -116,7 +116,9 @@ def describe_part(part: Dict[str, Any]) -> str:
         effect = str(part.get("effect", ""))
         return f"[{effect_name(effect)}特效]"
     if kind == "text_effect":
-        return f"[文字效果「{text_effect_name(str(part.get('effect', '')))}」：{part.get('text', '')}]"
+        name = text_effect_name(str(part.get("effect", "")))
+        text = str(part.get("text") or "").strip()
+        return f"[文字效果「{name}」：{text}]" if text else f"[文字效果「{name}」]"
     if kind == "sticker":
         return "[贴纸]"
     if kind == "unsupported":
