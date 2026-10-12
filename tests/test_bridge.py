@@ -9,7 +9,7 @@ import shutil
 
 import pytest
 
-from imessage_adapter_under_test.core.bridge import SidecarError, SidecarSupervisor
+from imessage_adapter_under_test.core.bridge import SidecarError, SidecarProcess, SidecarSupervisor
 
 FAKE = Path(__file__).with_name("fake_sidecar.mjs")
 NODE = shutil.which("node")
@@ -132,5 +132,111 @@ def test_request_when_not_ready():
         with pytest.raises(SidecarError) as info:
             await h.supervisor.request("send")
         assert info.value.code == "NOT_READY"
+
+    run(main())
+
+
+# ── 以下回归测试来自外部审查（Codex）复现的问题 ─────────────────────────
+
+
+async def start_process(on_event, mode: str = "ok") -> SidecarProcess:
+    process = SidecarProcess(logging.getLogger("test.bridge"), on_event, lambda text: text.replace("TOPSECRET", "***"))
+    await process.start(NODE, FAKE, {**os.environ, "FAKE_MODE": mode, "FAKE_EMIT": "0", "PHOTON_PROJECT_SECRET": "TOPSECRET"})
+    await asyncio.wait_for(process.ready.wait(), 5)
+    return process
+
+
+async def kill(process: SidecarProcess) -> None:
+    if process._process is not None and process._process.returncode is None:
+        process._process.kill()
+    await process.wait()
+
+
+def test_malformed_receipt_does_not_stop_reading():
+    async def main():
+        async def on_event(event, data):
+            pass
+
+        process = await start_process(on_event)
+        try:
+            # 坏回执被跳过，紧接着的正常回执照样收到；之后的请求也正常
+            assert await process.request("malformed", timeout=2) == {"after": "malformed"}
+            assert (await process.request("ping", timeout=2))["echo"] == "ping"
+        finally:
+            await kill(process)
+
+    run(main())
+
+
+def test_error_messages_are_redacted():
+    async def main():
+        async def on_event(event, data):
+            pass
+
+        process = await start_process(on_event)
+        try:
+            with pytest.raises(SidecarError) as caught:
+                await process.request("leak", timeout=2)
+            assert "TOPSECRET" not in str(caught.value) and "***" in caught.value.message
+        finally:
+            await kill(process)
+
+    run(main())
+
+
+def test_request_timeout_covers_a_blocked_pipe():
+    async def main():
+        async def on_event(event, data):
+            pass
+
+        process = await start_process(on_event, mode="stall-input")
+        try:
+            started = asyncio.get_running_loop().time()
+            with pytest.raises(SidecarError) as caught:
+                # 2MB 写进不再读取的管道会卡在 drain；总时限要把这段也算进去
+                await process.request("send", {"text": "x" * (2 * 1024 * 1024)}, timeout=0.3)
+            assert caught.value.code == "TIMEOUT"
+            assert asyncio.get_running_loop().time() - started < 2
+        finally:
+            await kill(process)
+
+    run(main())
+
+
+def test_backlog_is_still_processed_after_the_sidecar_exits():
+    async def main():
+        gate = asyncio.Event()
+        seen: list[str] = []
+
+        async def on_event(event, data):
+            if event == "message":
+                await gate.wait()
+                seen.append(data["message_id"])
+
+        process = await start_process(on_event)
+        await process.request("burst", {"count": 50}, timeout=2)
+        with pytest.raises(SidecarError):
+            await process.request("crash", timeout=2)
+        await asyncio.wait_for(process.wait(), 5)  # 侧车退出后立刻返回，不等积压处理完
+        dispatch = process.dispatch_task
+        assert dispatch is not None and not dispatch.done()
+        gate.set()
+        await asyncio.wait_for(dispatch, 5)
+        assert seen == [f"burst-{i}" for i in range(50)]  # 一条不丢，顺序不变
+
+    run(main())
+
+
+def test_backoff_does_not_overflow_after_days_of_failures():
+    h = Harness(mode="crash-on-start")
+
+    async def main():
+        # 断网几天后连续失败上千次：以前算 2 的上千次方会溢出，监督循环就此退出
+        h.supervisor.status.consecutive_failures = 1025
+        await h.start()
+        await h.wait_for(lambda: h.supervisor.status.state == "waiting_retry")
+        assert h.supervisor._loop_task is not None and not h.supervisor._loop_task.done()
+        assert h.supervisor.status.next_retry_at is not None
+        await h.supervisor.stop()
 
     run(main())

@@ -728,3 +728,12 @@ def test_placed_sticker_uses_target_for_read_and_quote(tmp_path: Path, monkeypat
     asyncio.run(main())
     reads = [op["args"]["message_id"] for op in sidecar_ops(tmp_path) if op["op"] == "mark_read"]
     assert reads == ["BOT-1"]
+
+
+def test_old_secret_is_still_redacted_after_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    assert plugin._redact("x TOPSECRET y") == "x *** y"
+    data = plugin.get_plugin_config_data()
+    data["photon"]["project_secret"] = "NEWSECRET"
+    plugin.set_plugin_config(data)
+    assert plugin._redact("old TOPSECRET new NEWSECRET") == "old *** new ***"

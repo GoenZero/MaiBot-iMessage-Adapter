@@ -111,10 +111,15 @@ class SidecarProcess:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(task, timeout=5.0)
         self._fail_pending(SidecarError("SIDECAR_EXITED", f"侧车已退出（退出码 {code}）"))
+        # 已经收到的消息照常处理完：分发任务在后台继续跑，处理完积压就自己结束。
+        # 不等它，也不取消它（以前等 10 秒就取消，积压多时会丢掉队尾的消息）
         await self._events.put(None)
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(self._tasks[2], timeout=10.0)
         return code
+
+    @property
+    def dispatch_task(self) -> Optional[asyncio.Task[None]]:
+        """处理收到的事件的后台任务；插件卸载时由监督器取消。"""
+        return self._tasks[2] if len(self._tasks) > 2 else None
 
     async def request(self, op: str, args: Optional[Dict[str, Any]] = None, timeout: float = 30.0) -> Dict[str, Any]:
         """发一个请求并等待回执；失败时抛出 SidecarError。"""
@@ -125,11 +130,17 @@ class SidecarProcess:
         future: asyncio.Future[Dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
         line = json.dumps({"id": request_id, "op": op, "args": args or {}}, ensure_ascii=False) + "\n"
-        try:
+        stdin = process.stdin
+
+        async def send_and_wait() -> Dict[str, Any]:
             async with self._write_lock:
-                process.stdin.write(line.encode("utf-8"))
-                await process.stdin.drain()
-            return await asyncio.wait_for(future, timeout=timeout)
+                stdin.write(line.encode("utf-8"))
+                await stdin.drain()
+            return await future
+
+        try:
+            # 侧车不读输入时，写管道也会卡住，所以总时限要把写入也算进去
+            return await asyncio.wait_for(send_and_wait(), timeout=timeout)
         except asyncio.TimeoutError as exc:
             raise SidecarError("TIMEOUT", f"侧车 {timeout:.0f} 秒内没有回应 {op}") from exc
         except (BrokenPipeError, ConnectionResetError) as exc:
@@ -184,11 +195,19 @@ class SidecarProcess:
                 # 不是协议帧（第三方库直接写了 stdout），当普通日志
                 self._logger.info("[侧车] %s", self._redact(text))
                 continue
-            self._handle_frame(frame)
+            try:
+                self._handle_frame(frame)
+            except Exception:
+                # 一帧格式不对不能让读取任务退出，否则之后的消息和回执都收不到了
+                self._logger.exception("处理侧车输出的一帧时出错，已跳过")
 
     def _handle_frame(self, frame: Dict[str, Any]) -> None:
         if frame.get("t") == "res":
-            future = self._pending.get(frame.get("id"))  # type: ignore[arg-type]
+            request_id = frame.get("id")
+            if not isinstance(request_id, int) or isinstance(request_id, bool):
+                self._logger.warning("侧车回执的编号格式不对，已忽略")
+                return
+            future = self._pending.get(request_id)
             if future is None or future.done():
                 return
             if frame.get("ok"):
@@ -196,7 +215,9 @@ class SidecarProcess:
                 future.set_result(result if isinstance(result, dict) else {})
             else:
                 error = frame.get("error") if isinstance(frame.get("error"), dict) else {}
-                future.set_exception(SidecarError(str(error.get("code", "UNKNOWN")), str(error.get("message", ""))))
+                # 错误信息可能带出配置（例如密钥），先遮蔽再往外传，之后谁记日志都安全
+                message = self._redact(str(error.get("message", "")))
+                future.set_exception(SidecarError(self._redact(str(error.get("code", "UNKNOWN"))), message))
         elif frame.get("t") == "evt":
             event = str(frame.get("event", ""))
             data = frame.get("data") if isinstance(frame.get("data"), dict) else {}
@@ -260,6 +281,8 @@ class SidecarSupervisor:
         self._loop_task: Optional[asyncio.Task[None]] = None
         self._stopping = False
         self._restart_now = asyncio.Event()
+        # 已退出的侧车留下的、还在处理积压消息的分发任务
+        self._draining: set[asyncio.Task[None]] = set()
         self.status = SidecarStatus()
 
     @property
@@ -295,6 +318,9 @@ class SidecarSupervisor:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._loop_task
             self._loop_task = None
+        for task in list(self._draining):
+            task.cancel()
+        self._draining.clear()
         await self._set_ready(False)
         self.status.state = "stopped"
         self.status.pid = None
@@ -324,6 +350,7 @@ class SidecarSupervisor:
             status.state = "starting"
             started_at = time.monotonic()
             exit_code: Optional[int] = None
+            process: Optional[SidecarProcess] = None
             try:
                 node, script, env = await launch()
                 process = SidecarProcess(self._logger, self._on_event, self._redact)
@@ -356,6 +383,10 @@ class SidecarSupervisor:
                 status.last_error = self._redact(str(exc))
                 self._logger.error("启动侧车失败：%s", status.last_error)
             finally:
+                dispatch = process.dispatch_task if process is not None else None
+                if dispatch is not None and not dispatch.done():
+                    self._draining.add(dispatch)
+                    dispatch.add_done_callback(self._draining.discard)
                 self._process = None
                 status.pid = None
                 status.ready_since = None
@@ -383,7 +414,9 @@ class SidecarSupervisor:
             if status.consecutive_failures <= fast_retries:
                 delay = retry_interval
             else:
-                delay = min(retry_interval * 2 ** (status.consecutive_failures - fast_retries), _MAX_BACKOFF)
+                # 指数先封顶再计算：断网好几天后连续失败上千次，2 的上千次方会溢出，监督循环就此退出
+                exponent = min(status.consecutive_failures - fast_retries, 20)
+                delay = min(retry_interval * 2**exponent, _MAX_BACKOFF)
             status.state = "waiting_retry"
             status.next_retry_at = time.time() + delay
             self._logger.info("%.0f 秒后重启侧车（连续失败 %d 次）", delay, status.consecutive_failures)

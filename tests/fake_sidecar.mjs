@@ -20,6 +20,11 @@ if (process.env.FAKE_EMIT === "1") {
   }
 }
 
+if (mode === "stall-input") {
+  // 报告 ready 后不再读取输入：用来测试 Python 写管道卡住时的总时限
+  process.stdin.pause();
+  setInterval(() => {}, 1000);
+} else {
 const rl = createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const req = JSON.parse(line);
@@ -58,6 +63,20 @@ rl.on("line", (line) => {
         frame({ t: "res", id: req.id, ok: true, result: {} });
       }
       break;
+    case "malformed":
+      // 合法 JSON，但回执编号是对象
+      frame({ t: "res", id: { bad: 1 }, ok: true, result: {} });
+      frame({ t: "res", id: req.id, ok: true, result: { after: "malformed" } });
+      break;
+    case "leak":
+      frame({ t: "res", id: req.id, ok: false, error: { code: "INTERNAL", message: "failure: " + (process.env.PHOTON_PROJECT_SECRET ?? "") } });
+      break;
+    case "burst":
+      for (let i = 0; i < req.args.count; i++) {
+        frame({ t: "evt", event: "message", data: { message_id: `burst-${i}`, chat_id: "any;-;+1", sender_id: "+1", timestamp: 0, parts: [{ type: "text", text: "x" }] } });
+      }
+      frame({ t: "res", id: req.id, ok: true, result: {} });
+      break;
     case "fail":
       frame({ t: "res", id: req.id, ok: false, error: { code: "TARGET_NOT_ALLOWED", message: "Target not allowed" } });
       break;
@@ -75,3 +94,4 @@ rl.on("line", (line) => {
   }
 });
 rl.on("close", () => process.exit(0));
+}

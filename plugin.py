@@ -78,6 +78,8 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         # 对方用户 ID（手机号/邮箱）→ iMessage 对话编号
         self._chat_by_user: Dict[str, str] = {}
         self._last_error: str = ""
+        # 日志里要遮蔽的密钥（包括改配置前的旧密钥）
+        self._secrets: set[str] = set()
         self._sessions = SessionDirectory(self._fetch_imessage_streams)
         self._background: set[asyncio.Task[Any]] = set()
         self._typing: Optional[TypingController] = None
@@ -147,8 +149,13 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
     ═══════════════════════════════════════════════"""
 
     def _redact(self, text: str) -> str:
+        # 记住用过的每一个密钥：改了密钥以后，旧侧车留下的日志里也可能有旧密钥
         secret = self.config.photon.project_secret
-        return text.replace(secret, "***") if secret and len(secret) >= 4 else text
+        if secret and len(secret) >= 4:
+            self._secrets.add(secret)
+        for known in self._secrets:
+            text = text.replace(known, "***")
+        return text
 
     async def _restart_connection_if_needed(self) -> None:
         await self._stop_connection()
