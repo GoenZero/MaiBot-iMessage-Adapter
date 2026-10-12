@@ -70,6 +70,7 @@ MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.j
 | `[capabilities]` | `effects` | true | 允许 AI 发带特效的消息（气球、烟花、隐形墨水等） |
 | `[capabilities]` | `polls` | true | 允许 AI 发起投票 |
 | `[capabilities]` | `chat_background` | true | 你要求时，AI 可以设置或清除聊天背景 |
+| `[capabilities]` | `stickers` | true | 允许 AI 从 MaiBot 表情包库挑一张，当贴纸贴在你的某条消息上 |
 | `[capabilities]` | `share_contact` | true | 你要求时，AI 可以分享机器人账号的名字和头像 |
 | `[capabilities]` | `link_preview` | true | 一段回复只有一个链接时，以链接预览卡片发出 |
 | `[capabilities]` | `notify_reactions` | true | 对方点赞、在投票里选了选项时告诉 AI |
@@ -115,6 +116,7 @@ MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码，否则
 | `imessage_send_effect` | 发一条带特效的消息，例如生日时放烟花 |
 | `imessage_poll` | 发起投票 |
 | `imessage_background` | 把你发的某张图片设为聊天背景，或清除背景 |
+| `imessage_place_sticker` | 从 MaiBot 的表情包库挑一张，当贴纸贴在你的某条消息上 |
 | `imessage_share_contact` | 用「共享名字与照片」把机器人账号的名字和头像发给你 |
 
 另外这些是自动完成的：输入中提示、自动已读、引用回复、Markdown 样式、链接预览卡片。
@@ -125,6 +127,9 @@ MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码，否则
 |---|---|
 | 文字 | 原文 |
 | 照片（含 iPhone 默认的 HEIC） | 图片 |
+| 贴纸（苹果自带、Memoji、第三方贴纸包、照片抠出来的贴纸） | 交给 MaiBot 的表情包系统识别，例如「[表情包：一只猫在比心]」 |
+| 贴在某条消息上的贴纸 | 引用那条消息 + 贴纸 |
+| 带气泡特效、屏幕特效、iOS 18 文字效果的消息 | 原文，后面加「[放大特效]」「[文字效果「摇晃」：……]」这样的标签 |
 | 文字和多张照片一起发 | 文字和每一张图片，顺序不变 |
 | 长按某句话「回复」 | 消息本身，并标明引用的是哪一句 |
 | 联系人名片 | 姓名、电话、邮箱、单位 |

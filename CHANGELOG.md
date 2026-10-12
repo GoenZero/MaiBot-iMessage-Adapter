@@ -37,6 +37,13 @@
 - 工具改放在 `tools.py`；能力注册表允许一个开关管几个工具。每项新能力都有 WebUI 开关，关掉后 AI 看不到对应工具。
 - 配置结构版本升到 2.2.0。
 
+### 第三阶段：特效识别与贴纸
+
+- 修复：对方发的气泡特效、屏幕特效，AI 其实看不到（第二阶段测试时 AI 在迎合）。spectrum-ts 只把特效编号放在消息的附加字段上，侧车之前没读。现在连同 iOS 18 文字效果一起告诉 AI，例如「[放大特效]」「[文字效果「摇晃」：会谢]」。特效中文名统一到一张表（`core/effects.py`），和 iPhone 上的叫法一致。
+- 收贴纸：单独发来的贴纸（苹果自带、Memoji、第三方贴纸包、照片抠出来的）交给 MaiBot 的表情包系统识别；贴在某条消息上的贴纸（spectrum-ts 不转发，打包时补上）变成「引用那条消息 + 贴纸」。
+- 贴贴纸：新增 AI 工具 `imessage_place_sticker`，从 MaiBot 表情包库挑一张符合情绪的表情包，当贴纸贴在对方的某条消息上。spectrum-ts 没有封装这个功能，打包时开放一个入口。新增开关「贴贴纸」。
+- 配置结构版本升到 2.4.0。
+
 ### 第二次交付真机返修
 
 - 修复：对方在投票里选了选项，AI 不知道。Photon 送来的投票没有标题，而 spectrum-ts 缓存投票时要求标题非空，缓存失败后对方的投票全部被丢掉。现在打包时修补这一处；AI 发起的投票，侧车会把标题补回来。
@@ -81,4 +88,4 @@
 - 侧车日志中的 Project Secret 会被遮蔽。
 - 删除 `debug.py` 调试发送脚本，以及不再需要的 Python 依赖 websockets、tomlkit。
 - 插件声明需要 maibot-plugin-sdk 2.10.0 或以上。
-- 新增自动测试：侧车 41 项（`cd sidecar && npm run check`），Python 70 项（`python -m pytest tests`）。
+- 新增自动测试：侧车 44 项（`cd sidecar && npm run check`），Python 74 项（`python -m pytest tests`）。
