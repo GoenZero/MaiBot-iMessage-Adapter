@@ -127,3 +127,28 @@ def load_image_file(path: str, mime: str, *, max_edge: int = 2048) -> Tuple[Opti
         # 其他格式转换失败时，原图交给 MaiBot 试试
         return base64.b64encode(data).decode("ascii"), mime
     return base64.b64encode(prepared).decode("ascii"), out_mime
+
+
+STICKER_MAX_EDGE = 512
+# 动图在这个大小以内原样当贴纸发（缩小会丢掉动画）
+STICKER_KEEP_ANIMATED_BYTES = 2 * 1024 * 1024
+
+
+def prepare_sticker(data: bytes) -> Tuple[bytes, str]:
+    """把一张表情包处理成贴纸用的图片，返回 (字节, 文件扩展名)。
+
+    贴纸显示得很小，静态图统一缩到 512 像素以内并存成带透明的 PNG；不太大的动图原样保留。
+    出错时抛异常，由调用方告诉 AI 这次没贴成。
+    """
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as image:
+        fmt = (image.format or "").upper()
+        if getattr(image, "is_animated", False) and len(data) <= STICKER_KEEP_ANIMATED_BYTES and fmt in ("GIF", "PNG", "WEBP"):
+            return data, {"GIF": ".gif", "PNG": ".png", "WEBP": ".webp"}[fmt]
+        image.seek(0)
+        working = image.convert("RGBA")
+        working.thumbnail((STICKER_MAX_EDGE, STICKER_MAX_EDGE), Image.Resampling.LANCZOS)
+        output = io.BytesIO()
+        working.save(output, format="PNG", compress_level=6)
+        return output.getvalue(), ".png"

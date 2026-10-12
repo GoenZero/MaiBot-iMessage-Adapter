@@ -7,7 +7,7 @@ from typing import ClassVar, Dict, Literal, Optional
 from maibot_sdk import Field, PluginConfigBase
 
 # 配置结构有增减时提升版本：MaiBot 只在版本升高时把新字段写回已有的 config.toml
-SUPPORTED_CONFIG_VERSION = "2.3.0"
+SUPPORTED_CONFIG_VERSION = "2.4.0"
 PLUGIN_VERSION = "0.2.0"
 
 DEFAULT_MAX_RETRIES = 3
@@ -331,6 +331,15 @@ class CapabilitiesConfig(PluginConfigBase):
             "i18n": _schema_i18n(label_en="Chat background", label_ja="チャット背景", label_ko="채팅 배경"),
             "label": "聊天背景",
             "order": 9,
+        },
+    )
+    stickers: bool = Field(
+        default=True,
+        description="允许 AI 从 MaiBot 的表情包库里挑一张，当作贴纸贴在你的某条消息上。",
+        json_schema_extra={
+            "i18n": _schema_i18n(label_en="Place stickers", label_ja="ステッカーを貼る", label_ko="스티커 붙이기"),
+            "label": "贴贴纸",
+            "order": 15,
         },
     )
     share_contact: bool = Field(

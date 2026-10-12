@@ -120,6 +120,15 @@ REGISTRY: Sequence[Capability] = (
         is_enabled=lambda c: _caps(c).chat_background,
     ),
     Capability(
+        key="stickers",
+        title="贴贴纸",
+        photon_call="messages.placeSticker（打包补丁开放）",
+        plan="free",
+        kind="tool",
+        tool_names=("imessage_place_sticker",),
+        is_enabled=lambda c: _caps(c).stickers,
+    ),
+    Capability(
         key="contact_card",
         title="分享名片",
         photon_call="nativeContactCard()",

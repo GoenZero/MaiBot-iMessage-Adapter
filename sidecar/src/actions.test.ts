@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { type ActionMessage, Actions, type Builders, findImage, type SpaceLike } from "./actions.ts";
+import { type ActionDeps, type ActionMessage, Actions, type Builders, findImage, type SpaceLike } from "./actions.ts";
 import { LruCache } from "./handles.ts";
 import { trackUnsupported } from "./sdklog.ts";
 
@@ -219,4 +219,24 @@ test("SDK 把操作当成不支持而跳过时，报失败而不是假装成功"
   // 别的操作的警告不影响这次
   handles.set("out-2", { ...sentMessage("out-2"), unsend: async () => void skip("background", "x") });
   await actions.unsend({ chat_id: "+1", message_id: "out-2" });
+});
+
+test("贴贴纸：图片只能来自临时目录，找不到消息时报错，没有入口时报不支持", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "sticker-"));
+  const file = join(dir, "s.png");
+  await writeFile(file, Buffer.from([9, 9]));
+  const placed: unknown[] = [];
+  const handles = new LruCache<ActionMessage>(10);
+  handles.set("in-1", { id: "in-1", content: { type: "text", text: "早" }, direction: "inbound" });
+  const space: SpaceLike = { id: "any;-;+1", phone: "shared", send: async () => undefined, startTyping: async () => {}, stopTyping: async () => {}, getMessage: async () => undefined };
+  const make = (place?: () => ReturnType<NonNullable<ActionDeps["placeSticker"]>>) =>
+    new Actions({ resolveSpace: async () => space, handles, mediaDir: dir, maxAttachmentBytes: 1024, builders, warn: () => {}, placeSticker: place });
+
+  const actions = make(() => async (args) => (placed.push({ ...args, data: [...args.data] }), { id: "ST-1" }));
+  assert.deepEqual(await actions.placeSticker({ chat_id: "+1", message_id: "in-1", path: file, name: "s.png" }), { sticker_id: "ST-1" });
+  assert.deepEqual(placed, [{ spaceId: "any;-;+1", phone: "shared", messageId: "in-1", data: [9, 9], fileName: "s.png", placement: { x: 0.5, y: 0.5 } }]);
+
+  await assert.rejects(actions.placeSticker({ chat_id: "+1", message_id: "nope", path: file }), { code: "MESSAGE_NOT_FOUND" });
+  await assert.rejects(actions.placeSticker({ chat_id: "+1", message_id: "in-1", path: "/etc/passwd" }));
+  await assert.rejects(make(() => undefined).placeSticker({ chat_id: "+1", message_id: "in-1", path: file }), { code: "UNSUPPORTED" });
 });

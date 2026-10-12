@@ -9,18 +9,24 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from maibot_sdk import Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+import asyncio
+import base64
+import binascii
 import json
 import re
+import secrets
 
 from .core.bridge import SidecarError
 from .core.capabilities import capability
 from .core.effects import EFFECT_NAMES
 from .core.lru import LruDict
+from .core.media import prepare_sticker
 
 if TYPE_CHECKING:
     from .config import IMessageAdapterConfig
@@ -68,6 +74,11 @@ BACKGROUND_DESCRIPTION = (
     "设置或清除这个 iMessage 对话的聊天背景，双方都会看到。只在对方明确要求换背景或清除背景时用。"
     "action=set 时用 msg_id 指定一条带图片的消息（通常是对方刚发来的那张图）；action=clear 清除背景，不用填 msg_id。"
 )
+STICKER_DESCRIPTION = (
+    "从你的表情包库里挑一张符合情绪的表情包，当作贴纸贴在对方的某条消息气泡上（就像 iPhone 上长按消息贴贴纸），"
+    "不会单独发一条消息。适合想对某句话做个俏皮、可爱的回应时；不要频繁用，一轮对话最多一次。"
+    "emotion 写想表达的情绪，例如 开心、无语、害羞、委屈。"
+)
 SHARE_CONTACT_DESCRIPTION = (
     "用 iMessage 的「共享名字与照片」把你这个号码的名字和头像发给对方。"
     "对方不会收到一条消息，而是在聊天顶部你的名字下面出现「更新」，点了才会改。"
@@ -106,6 +117,7 @@ class IMessageToolsMixin:
         config: IMessageAdapterConfig
         ctx: Any
         _supervisor: Optional[SidecarSupervisor]
+        _media_dir: Optional[Path]
 
         async def _chat_for_stream(self, stream_id: str) -> Optional[str]: ...
 
@@ -393,3 +405,49 @@ class IMessageToolsMixin:
             "success": True,
             "content": "已分享。对方不会收到新消息，而是在聊天顶部你的名字下面看到「更新」，点了才会改成 Photon 账号设置的名字和头像",
         }
+
+    # ── 贴贴纸：从 MaiBot 表情包库挑一张，贴在对方的消息上 ────────
+
+    @Tool(
+        "imessage_place_sticker",
+        description=STICKER_DESCRIPTION,
+        parameters=[
+            ToolParameterInfo(name="msg_id", param_type=ToolParamType.STRING, description="要贴贴纸的那条消息的 msg_id"),
+            ToolParameterInfo(name="emotion", param_type=ToolParamType.STRING, description="想表达的情绪，例如 开心、无语"),
+        ],
+        chat_scope="private",
+    )
+    async def tool_place_sticker(self, msg_id: str = "", emotion: str = "", stream_id: str = "", **kwargs: Any) -> Dict[str, Any]:
+        del kwargs
+        chat_id, refused = await self._tool_chat(stream_id, "stickers")
+        if refused:
+            return refused
+        if self._media_dir is None:
+            return {"success": False, "error": "iMessage 网关未就绪"}
+        try:
+            emoji = await self.ctx.emoji.get_by_description(emotion.strip() or "开心")
+        except Exception as exc:  # noqa: BLE001 - 取表情包失败只告诉 AI
+            self.ctx.logger.warning("iMessage 工具：取表情包失败 %s", exc)
+            return {"success": False, "error": "这次没取到表情包"}
+        if not isinstance(emoji, dict) or not emoji.get("base64"):
+            return {"success": False, "error": f"表情包库里没有适合「{emotion}」的表情包，这次没贴成"}
+        try:
+            raw = base64.b64decode(str(emoji["base64"]), validate=False)
+            data, extension = await asyncio.to_thread(prepare_sticker, raw)
+        except (binascii.Error, ValueError, OSError) as exc:
+            self.ctx.logger.warning("iMessage 工具：表情包图片处理失败 %s", exc)
+            return {"success": False, "error": "这张表情包的图片处理失败，这次没贴成"}
+        path = self._media_dir / f"sticker-{secrets.token_hex(8)}{extension}"
+        await asyncio.to_thread(path.write_bytes, data)
+        try:
+            await self._sidecar_call(
+                "place_sticker",
+                {"chat_id": chat_id, "message_id": msg_id, "path": str(path), "name": f"sticker{extension}"},
+                timeout=BACKGROUND_TIMEOUT,
+            )
+        except SidecarError as exc:
+            return self._tool_failure("贴", exc)
+        finally:
+            path.unlink(missing_ok=True)
+        described = str(emoji.get("description") or emoji.get("emotion") or emotion).strip()
+        return {"success": True, "content": f"已在这条消息上贴了一张贴纸（{described}）"}

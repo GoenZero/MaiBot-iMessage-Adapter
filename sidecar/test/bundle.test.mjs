@@ -77,7 +77,10 @@ test("修补后，对方的编辑、撤回、取消点赞、贴纸、发起的�
   const patchedFile = join(dist, `.patched-test-${process.pid}.js`);
   const source = readFileSync(join(dist, "index.js"), "utf8");
   // 放在原文件旁边，相对导入才能解析；末尾导出内部函数供测试调用
-  writeFileSync(patchedFile, `${patchImessageSource(source)}\nexport { toMessageItem as __toMessageItem, toPollItem as __toPollItem };\n`);
+  writeFileSync(
+    patchedFile,
+    `${patchImessageSource(source)}\nexport { toMessageItem as __toMessageItem, toPollItem as __toPollItem, messages$1 as __messages };\n`,
+  );
   try {
     const { __toMessageItem: toMessageItem } = await import(patchedFile);
     const base = { chatGuid: "any;-;+15550001111", isFromMe: false, occurredAt: new Date(0), sequence: 7, messageGuid: "GUID-1" };
@@ -122,6 +125,31 @@ test("修补后，对方的编辑、撤回、取消点赞、贴纸、发起的�
     const voted = await toPollItem({}, cache, { ...poll, sequence: 2, delta: { type: "voted", optionIdentifier: "b" } }, "shared", "p2");
     assert.equal(voted.values[0].content.type, "poll_option");
     assert.equal(voted.values[0].content.option.title, "爬山");
+    // 贴贴纸：消息流启动时登记入口；先上传图片，再贴到消息（组合消息的某一部分要带 partIndex）
+    const { __messages: startMessages } = await import(patchedFile);
+    const calls = [];
+    const remote = {
+      attachments: { upload: async (input) => (calls.push(["upload", input.fileName, input.data.length]), { attachment: { guid: "UP-1" } }) },
+      messages: { placeSticker: async (...args) => (calls.push(["place", ...args]), { guid: "ST-1" }) },
+    };
+    delete globalThis.__imessagePlaceSticker;
+    startMessages([{ client: remote, phone: "shared" }], undefined, undefined);
+    assert.equal(typeof globalThis.__imessagePlaceSticker, "function");
+    const result = await globalThis.__imessagePlaceSticker({
+      spaceId: "any;-;+1",
+      phone: "shared",
+      messageId: "p:1/MSG-1",
+      data: new Uint8Array([1, 2, 3]),
+      fileName: "s.png",
+      placement: { x: 0.5, y: 0.5 },
+    });
+    assert.deepEqual(result, { id: "ST-1" });
+    assert.deepEqual(calls, [
+      ["upload", "s.png", 3],
+      ["place", "any;-;+1", "MSG-1", "UP-1", { x: 0.5, y: 0.5 }, { partIndex: 1 }],
+    ]);
+    delete globalThis.__imessagePlaceSticker;
+
     // 机器人自己发起的投票不当成对方的消息
     const ownPoll = await toPollItem({}, new Map(), { ...poll, isFromMe: true, sequence: 3, delta: { type: "created", title: "", options } }, "shared", "p3");
     assert.deepEqual(ownPoll.values, []);

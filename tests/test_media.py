@@ -10,7 +10,7 @@ import io
 import pytest
 from PIL import Image
 
-from imessage_adapter_under_test.core.media import is_heif, load_image_file, prepare_image
+from imessage_adapter_under_test.core.media import is_heif, load_image_file, prepare_image, prepare_sticker
 
 pillow_heif = pytest.importorskip("pillow_heif")
 
@@ -106,3 +106,18 @@ def test_unknown_but_broken_non_heic_is_passed_through(tmp_path: Path) -> None:
     path.write_bytes(b"not really a jpeg")
     encoded, mime = load_image_file(str(path), "image/jpeg")
     assert base64.b64decode(encoded or "") == b"not really a jpeg" and mime == "image/jpeg"
+
+
+
+def test_sticker_is_small_png_and_animated_gif_is_kept() -> None:
+    buffer = io.BytesIO()
+    Image.new("RGBA", (1200, 800), (255, 0, 0, 128)).save(buffer, format="PNG")
+    data, ext = prepare_sticker(buffer.getvalue())
+    image = decode(data)
+    assert ext == ".png" and image.format == "PNG" and image.mode == "RGBA" and max(image.size) == 512
+
+    frames = [Image.new("RGB", (64, 64), color) for color in ((255, 0, 0), (0, 255, 0), (0, 0, 255))]
+    gif = io.BytesIO()
+    frames[0].save(gif, format="GIF", save_all=True, append_images=frames[1:], duration=100, loop=0)
+    kept, ext = prepare_sticker(gif.getvalue())
+    assert ext == ".gif" and kept == gif.getvalue()  # 动图原样保留

@@ -34,7 +34,7 @@ export function bundledGrpcPeersPlugin(stats) {
 export const UNTITLED_POLL = "__imessage_untitled_poll__";
 
 /**
- * 对 @spectrum-ts/imessage 的三处修补（真机测试发现），都在打包时完成，找不到要改的代码时让打包失败：
+ * 对 @spectrum-ts/imessage 的几处修补（真机测试发现），都在打包时完成，找不到要改的代码时让打包失败：
  *
  * 1. 投票标题：Photon 送回来的投票（包括 AI 自己发起的）标题是空的，而 SDK 缓存投票时要求标题非空，
  *    缓存失败后对方的投票事件全部被丢掉。让空标题变成 UNTITLED_POLL，侧车再把真正的标题补回来
@@ -90,6 +90,22 @@ const POLL_CREATED_FORWARDER = `
 	}
 `;
 
+/**
+ * 4. 贴贴纸（第三阶段）：底层 SDK 能把上传好的图片当贴纸贴在某条消息上（messages.placeSticker），
+ *    spectrum-ts 没有封装，也不让外面拿到底层客户端。这里在消息流启动时登记一个
+ *    globalThis.__imessagePlaceSticker，侧车通过它上传图片并贴上（见 src/actions.ts）。
+ */
+const STICKER_PLACER = `
+	globalThis.__imessagePlaceSticker = async ({ spaceId, phone, messageId, data, fileName, placement }) => {
+		const remote = clientForPhone(clients, phone);
+		const uploaded = await remote.attachments.upload({ data, fileName });
+		const child = parseChildId(messageId);
+		const options = child ? { partIndex: child.partIndex } : undefined;
+		const placed = await remote.messages.placeSticker(toChatGuid(spaceId), toMessageGuid(child ? child.parentGuid : messageId), uploaded.attachment.guid, placement, options);
+		return { id: placed?.guid };
+	};
+`;
+
 /** 对 @spectrum-ts/imessage/dist/index.js 的源码做上面几处修补；找不到要改的代码时抛错。 */
 export function patchImessageSource(source, stats = {}) {
   const withPollFix = source.replace(
@@ -113,7 +129,14 @@ export function patchImessageSource(source, stats = {}) {
     throw new Error(`无法修补 toPollDeltaMessages（锚点出现 ${pollParts.length - 1} 次），请检查 @spectrum-ts/imessage 是否改了实现`);
   }
   stats.pollCreatedPatched = (stats.pollCreatedPatched ?? 0) + 1;
-  return pollParts[0] + pollAnchor + POLL_CREATED_FORWARDER + pollParts[1];
+  const withPollCreated = pollParts[0] + pollAnchor + POLL_CREATED_FORWARDER + pollParts[1];
+  const stickerAnchor = "const messages$1 = (clients, projectConfig, profileSyncGate) => {";
+  const stickerParts = withPollCreated.split(stickerAnchor);
+  if (stickerParts.length !== 2) {
+    throw new Error(`无法修补 messages$1（锚点出现 ${stickerParts.length - 1} 次），请检查 @spectrum-ts/imessage 是否改了实现`);
+  }
+  stats.stickerPatched = (stats.stickerPatched ?? 0) + 1;
+  return stickerParts[0] + stickerAnchor + STICKER_PLACER + stickerParts[1];
 }
 
 export function imessagePatchesPlugin(stats) {

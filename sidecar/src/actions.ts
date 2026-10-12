@@ -1,6 +1,6 @@
 /**
  * 出站动作：发送（含特效、投票、链接预览）、引用回复、点赞、编辑、撤回、聊天背景、分享名片、
- * 输入中、标记已读。
+ * 贴贴纸、输入中、标记已读。
  *
  * 每个动作都以 SDK 的实际调用结果为准：
  * - SDK 抛错 → 失败
@@ -29,6 +29,8 @@ export interface ActionMessage extends MessageLike {
 /** 对话对象（SDK Space 的最小形状）。 */
 export interface SpaceLike {
   id: string;
+  /** 这个对话用的 Photon 号码（共享号码时是 "shared"） */
+  phone?: string;
   send(...content: unknown[]): Promise<unknown>;
   startTyping(): Promise<void>;
   stopTyping(): Promise<void>;
@@ -88,8 +90,25 @@ export const TAPBACKS: Record<string, string> = {
   question: Emoji.question,
 };
 
+/** 贴贴纸：上传图片并贴在某条消息上。由打包补丁登记在 globalThis 上（见 build-config.mjs）。 */
+export type PlaceSticker = (args: {
+  spaceId: string;
+  phone: string | undefined;
+  messageId: string;
+  data: Uint8Array;
+  fileName: string;
+  placement: { x: number; y: number; scale?: number; rotation?: number };
+}) => Promise<{ id?: string }>;
+
+export function bundledPlaceSticker(): PlaceSticker | undefined {
+  const hook = (globalThis as { __imessagePlaceSticker?: unknown }).__imessagePlaceSticker;
+  return typeof hook === "function" ? (hook as PlaceSticker) : undefined;
+}
+
 export interface ActionDeps {
   resolveSpace(chatId: string): Promise<SpaceLike>;
+  /** 测试时可替换；默认用打包补丁登记的实现 */
+  placeSticker?: () => PlaceSticker | undefined;
   handles: LruCache<ActionMessage>;
   mediaDir: string;
   maxAttachmentBytes: number;
@@ -307,6 +326,31 @@ export class Actions {
     const space = await this.deps.resolveSpace(requireString(args, "chat_id"));
     await this.fireAndCheck(["contactCard"], () => space.send(this.deps.builders.contactCard()));
     return {};
+  }
+
+  /**
+   * 把一张图片当贴纸贴在对方的某条消息上（iMessage 长按消息 → 贴纸那种）。
+   * 图片来自 Python 写的临时文件（AI 从 MaiBot 表情包库挑的）。位置默认贴在气泡中间。
+   */
+  async placeSticker(args: Record<string, unknown>): Promise<{ sticker_id?: string }> {
+    const place = (this.deps.placeSticker ?? bundledPlaceSticker)();
+    if (!place) throw new BridgeError("UNSUPPORTED", "这个版本的侧车不支持贴贴纸");
+    const space = await this.deps.resolveSpace(requireString(args, "chat_id"));
+    const messageId = requireString(args, "message_id");
+    const path = requireString(args, "path");
+    const target = await this.findMessage(space, messageId);
+    if (!target) throw new BridgeError("MESSAGE_NOT_FOUND", `找不到消息 ${messageId}，可能太久远或适配器重启过`);
+    const data = await readOutboundFile(path, this.deps.mediaDir, this.deps.maxAttachmentBytes);
+    const name = optionalString(args, "name") ?? "sticker.png";
+    const placed = await place({
+      spaceId: space.id,
+      phone: space.phone,
+      messageId: target.id,
+      data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+      fileName: name,
+      placement: { x: 0.5, y: 0.5 },
+    });
+    return placed?.id ? { sticker_id: placed.id } : {};
   }
 
   /** 开始或停止「正在输入」。 */

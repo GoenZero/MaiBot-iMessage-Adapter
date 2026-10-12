@@ -8,10 +8,12 @@ from typing import Any
 import asyncio
 import base64
 import copy
+import io
 import os
 import shutil
 
 import pytest
+from PIL import Image
 from maibot_sdk.context import PluginContext, PluginPaths
 
 import imessage_adapter_under_test as plugin_module
@@ -37,6 +39,13 @@ class FakeHost:
         if method == "cap.call":
             if payload["capability"] == "chat.get_all_streams":
                 return {"success": True, "streams": [{"session_id": "s-imessage", "user_id": "+1", "is_group_session": False}]}
+            if payload["capability"] == "emoji.get_by_description":
+                if payload["args"]["description"] == "没有":
+                    return {"success": True, "emoji": None}
+                buffer = io.BytesIO()
+                Image.new("RGBA", (800, 800), (0, 0, 255, 255)).save(buffer, format="PNG")
+                emoji = {"base64": base64.b64encode(buffer.getvalue()).decode(), "description": "猫猫比心", "emotion": "开心"}
+                return {"success": True, "emoji": emoji}
             return {"success": True}
         return {}
 
@@ -51,7 +60,7 @@ def make_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, emit: bool) 
     plugin._set_context(PluginContext("com.galeros.imessage_adapter", host.rpc, paths))
     plugin.set_plugin_config(
         {
-            "plugin": {"enabled": True, "config_version": "2.3.0"},
+            "plugin": {"enabled": True, "config_version": "2.4.0"},
             "photon": {"project_id": "pid", "project_secret": "TOPSECRET"},
             "bridge": {"retry_interval": 1.0},
         }
@@ -124,7 +133,7 @@ def test_inbound_and_outbound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 def test_disabled_plugin_stays_idle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
-    plugin.set_plugin_config({"plugin": {"enabled": False, "config_version": "2.3.0"}, "photon": {"project_id": "p", "project_secret": "s"}})
+    plugin.set_plugin_config({"plugin": {"enabled": False, "config_version": "2.4.0"}, "photon": {"project_id": "p", "project_secret": "s"}})
 
     async def main() -> None:
         await plugin.on_load()
@@ -674,3 +683,21 @@ def test_voice_is_transcribed_or_politely_declined(tmp_path: Path, monkeypatch: 
     asr = [p["args"] for p in host.of("cap.call") if p["capability"] == "llm.transcribe_audio"]
     assert len(asr) == 2 and asr[0]["audio_base64"] == base64.b64encode(b"caf-bytes").decode()
     assert not list(tmp_path.glob("*.caf"))  # 临时文件用完即删
+
+
+def test_place_sticker_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        ok = await plugin.tool_place_sticker(msg_id="m1", emotion="开心", stream_id="s-imessage")
+        assert ok == {"success": True, "content": "已在这条消息上贴了一张贴纸（猫猫比心）"}
+        none = await plugin.tool_place_sticker(msg_id="m1", emotion="没有", stream_id="s-imessage")
+        assert none["success"] is False and "表情包库里没有" in none["error"]
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    op = next(op for op in sidecar_ops(tmp_path) if op["op"] == "place_sticker")
+    assert op["args"]["message_id"] == "m1" and op["args"]["name"] == "sticker.png"
+    assert not Path(op["args"]["path"]).exists()  # 临时文件用完即删

@@ -150,6 +150,8 @@ async function dispatch(request: Request): Promise<object> {
       return actions.background(request.args);
     case "share_contact":
       return actions.shareContact(request.args);
+    case "place_sticker":
+      return actions.placeSticker(request.args);
     case "typing":
       return actions.typing(request.args);
     case "mark_read":

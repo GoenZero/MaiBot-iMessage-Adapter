@@ -47,7 +47,8 @@
     "send.hybrid",
     "chat.get_all_streams",
     "maisaka.context.append",
-    "llm.transcribe_audio"
+    "llm.transcribe_audio",
+    "emoji.get_by_description"
   ],
   "i18n": {
     "default_locale": "zh-CN",
