@@ -19,6 +19,7 @@ def test_text_and_image(tmp_path):
     plan = build_outbound_plan(message, tmp_path, 1024)
     assert plan.parts[0] == {"type": "text", "text": "给你看"}
     assert plan.parts[1]["type"] == "file" and plan.parts[1]["mime"] == "image/jpeg"
+    assert plan.parts[1]["name"] == "image.jpg"
     assert (tmp_path / plan.parts[1]["path"].split("/")[-1]).read_bytes() == JPEG
     plan.cleanup()
     assert list(tmp_path.iterdir()) == []
@@ -113,3 +114,25 @@ def test_markdown_detection():
         assert looks_like_markdown(text), text
     for text in ("你好呀", "5*3=15", "- 就一行", "今天 #心情 不错", "哈哈*", "1. 只有一行", "a_b_c"):
         assert not looks_like_markdown(text), text
+
+
+def test_unknown_image_format_is_converted_to_png(tmp_path):
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 4), (255, 0, 0)).save(buffer, format="BMP")
+    message = {
+        "raw_message": [
+            {"type": "emoji", "binary_data_base64": base64.b64encode(buffer.getvalue()).decode()},
+            {"type": "image", "binary_data_base64": base64.b64encode(b"not an image at all").decode()},
+        ]
+    }
+    plan = build_outbound_plan(message, tmp_path, 1024 * 1024)
+    assert len(plan.parts) == 1
+    part = plan.parts[0]
+    assert part["mime"] == "image/png" and part["name"] == "image.png" and part["path"].endswith(".png")
+    assert sniff_image_mime((tmp_path / part["path"].split("/")[-1]).read_bytes()) == "image/png"
+    assert plan.skipped == ["image（认不出的图片格式）"]
+    plan.cleanup()

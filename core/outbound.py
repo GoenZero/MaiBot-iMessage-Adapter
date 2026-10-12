@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import base64
 import binascii
+import io
 import re
 import secrets
 
@@ -76,6 +77,21 @@ def sniff_image_mime(data: bytes) -> str:
 _EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/heic": ".heic"}
 
 
+def _convert_to_png(data: bytes) -> Optional[bytes]:
+    """把认不出格式的图片（BMP、TIFF 等）转成 PNG；Pillow 也打不开时返回 None。"""
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as image:
+            image.seek(0)
+            frame = image.convert("RGBA" if image.mode in ("RGBA", "LA", "P", "PA") else "RGB")
+        buffer = io.BytesIO()
+        frame.save(buffer, format="PNG", compress_level=3)
+        return buffer.getvalue()
+    except Exception:  # noqa: BLE001 - 任何解析失败都按「转不了」处理
+        return None
+
+
 def _write_temp(media_dir: Path, data: bytes, mime: str) -> Path:
     path = media_dir / f"out-{secrets.token_hex(8)}{_EXTENSIONS.get(mime, '.bin')}"
     path.write_bytes(data)
@@ -114,9 +130,17 @@ def build_outbound_plan(message: Dict[str, Any], media_dir: Path, max_bytes: int
                 plan.skipped.append(f"{kind}（{len(data) // 1024 // 1024}MB，超过附件上限）")
                 continue
             mime = sniff_image_mime(data)
+            if mime not in _EXTENSIONS:
+                # 认不出的格式原样发出去，iPhone 上会显示成一个叫 attachment 的文件（真机测试发现），先转成 PNG
+                converted = _convert_to_png(data)
+                if converted is None:
+                    plan.skipped.append(f"{kind}（认不出的图片格式）")
+                    continue
+                data, mime = converted, "image/png"
             path = _write_temp(media_dir, data, mime)
             plan.temp_files.append(path)
-            plan.parts.append({"type": "file", "path": str(path), "mime": mime})
+            # 带上文件名和扩展名，iPhone 才会按图片显示
+            plan.parts.append({"type": "file", "path": str(path), "mime": mime, "name": f"image{_EXTENSIONS[mime]}"})
         elif kind == "reply":
             data = segment.get("data")
             target = data.get("target_message_id") if isinstance(data, dict) else data
