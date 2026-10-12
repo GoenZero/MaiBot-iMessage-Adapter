@@ -737,3 +737,68 @@ def test_old_secret_is_still_redacted_after_change(tmp_path: Path, monkeypatch: 
     data["photon"]["project_secret"] = "NEWSECRET"
     plugin.set_plugin_config(data)
     assert plugin._redact("old TOPSECRET new NEWSECRET") == "old *** new ***"
+
+
+def _slow_image_plans(monkeypatch: pytest.MonkeyPatch, delay: float) -> None:
+    """让带图片的出站计划在写完临时文件后再慢一会（模拟树莓派上处理图片慢）。"""
+    import time as _time
+
+    real = plugin_module.build_outbound_plan
+
+    def slow(message: dict[str, Any], media_dir: Path, max_bytes: int) -> Any:
+        plan = real(message, media_dir, max_bytes)
+        if plan.temp_files:
+            _time.sleep(delay)
+        return plan
+
+    monkeypatch.setattr(plugin_module, "build_outbound_plan", slow)
+
+
+def test_sends_to_one_chat_keep_their_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    _slow_image_plans(monkeypatch, 0.3)
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 32).decode()
+    target = {"message_info": {"additional_config": {"platform_io_target_user_id": "+1"}}}
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        image = plugin.send_to_imessage({"raw_message": [{"type": "image", "binary_data_base64": png}], **target})
+        text = plugin.send_to_imessage({"raw_message": [{"type": "text", "data": "上面这张图"}], **target})
+        results = await asyncio.gather(image, text)
+        assert all(r["success"] for r in results)
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    sends = [op for op in sidecar_ops(tmp_path) if op["op"] == "send"]
+    assert [op["args"]["parts"][0]["type"] for op in sends] == ["file", "text"]
+    assert plugin._send_locks == {}
+
+
+def test_cancelled_send_leaves_no_attachment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    _slow_image_plans(monkeypatch, 0.3)
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 32).decode()
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        media = plugin._media_dir
+        before = set(media.iterdir())
+        sending = asyncio.create_task(
+            plugin.send_to_imessage(
+                {
+                    "raw_message": [{"type": "image", "binary_data_base64": png}],
+                    "message_info": {"additional_config": {"platform_io_target_user_id": "+1"}},
+                }
+            )
+        )
+        await wait_for(lambda: len(set(media.iterdir()) - before) > 0, timeout=5)
+        sending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await sending
+        await asyncio.sleep(0.6)
+        assert set(media.iterdir()) - before == set()
+        await plugin.on_unload()
+
+    asyncio.run(main())

@@ -66,6 +66,12 @@ def normalize_account(raw: str) -> str:
     return ("+" if value.startswith("+") else "") + digits
 
 
+def _discard_plan(building: "asyncio.Future[Any]") -> None:
+    """发送取消后才处理完的出站计划：删掉它写出的临时附件。"""
+    if building.cancelled() or building.exception() is not None:
+        return
+    building.result().cleanup()
+
 class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
     """iMessage 消息网关适配器插件。"""
 
@@ -95,6 +101,8 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         # 按对方号码记：AI 最近一次发消息的时间，以及最近一次告诉 AI「对方已读」的时间
         self._last_sent_at: Dict[str, float] = {}
         self._read_noted_at: Dict[str, float] = {}
+        # 每个对话一把发送锁，保证消息按 MaiBot 交来的顺序发出：[锁, 正在用它的发送数]
+        self._send_locks: Dict[str, list] = {}
         # 工具要用的记录（AI 发出的消息组、点过的回应）；和侧车的消息缓存同样大小
         self._init_tool_state(500)
 
@@ -514,9 +522,35 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         if not target:
             return {"success": False, "error": "缺少目标用户"}
         chat_id = self._chat_by_user.get(target, target)
+        async with self._send_turn(chat_id):
+            return await self._send_in_turn(supervisor, message, target, chat_id, self._media_dir)
 
+    @contextlib.asynccontextmanager
+    async def _send_turn(self, chat_id: str) -> Any:
+        """同一个对话的发送一条一条来：带图片的消息要先在后台处理图片，后交来的文字不能抢先发出。"""
+        entry = self._send_locks.get(chat_id)
+        if entry is None:
+            entry = self._send_locks[chat_id] = [asyncio.Lock(), 0]
+        entry[1] += 1
+        try:
+            async with entry[0]:
+                yield
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0:
+                self._send_locks.pop(chat_id, None)
+
+    async def _send_in_turn(
+        self, supervisor: SidecarSupervisor, message: dict[str, Any], target: str, chat_id: str, media_dir: Path
+    ) -> dict[str, Any]:
         max_bytes = self.config.bridge.max_attachment_size_mb * 1024 * 1024
-        plan = await asyncio.to_thread(build_outbound_plan, message, self._media_dir, max_bytes)
+        building = asyncio.ensure_future(asyncio.to_thread(build_outbound_plan, message, media_dir, max_bytes))
+        try:
+            plan = await asyncio.shield(building)
+        except asyncio.CancelledError:
+            # 发送被取消时，后台线程还在写临时附件；等它写完再删掉，不留孤儿文件
+            building.add_done_callback(_discard_plan)
+            raise
         for skipped in plan.skipped:
             self.ctx.logger.warning("出站消息中的「%s」暂不支持发送，已跳过", skipped)
         if not plan.parts:
