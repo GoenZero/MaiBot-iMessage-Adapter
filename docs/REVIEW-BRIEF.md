@@ -51,12 +51,12 @@ MaiBot ⇄ plugin.py（Python 插件）──标准输入输出，一行一个 J
 ```sh
 # Python（建议用独立的虚拟环境）
 pip install maibot-plugin-sdk==2.10.0 pytest pillow pillow-heif nodeenv
-python -m pytest tests            # 当前应全部通过（77 项）
+python -m pytest tests            # 当前应全部通过（86 项）
 
 # 侧车
 cd sidecar
 npm ci
-npm run check                     # 类型检查 + 单元测试 + 打包文件与源码一致（当前 46 项全部通过）
+npm run check                     # 类型检查 + 单元测试 + 打包文件与源码一致（当前 53 项全部通过）
 ```
 
 测试不连网络，不需要任何密钥。
