@@ -115,3 +115,14 @@ def test_untitled_poll_lists_options_only():
 
     assert describe_part({"type": "poll", "title": "", "options": ["海边", "爬山"]}) == "[投票] 海边 / 爬山"
     assert describe_part({"type": "poll", "title": "去哪", "options": ["海边"]}) == "[投票] 去哪：海边"
+
+
+def test_effect_labels_match_iphone_names():
+    from imessage_adapter_under_test.core.inbound import describe_part
+
+    # 名称和 iPhone「带效果发送」界面一致（真机截图：震撼、放大、缩小、隐形墨水）
+    assert describe_part({"type": "effect", "effect": "com.apple.MobileSMS.expressivesend.impact"}) == "[震撼特效]"
+    assert describe_part({"type": "effect", "effect": "com.apple.MobileSMS.expressivesend.gentle"}) == "[缩小特效]"
+    assert describe_part({"type": "effect", "effect": "com.apple.messages.effect.CKShootingStarEffect"}) == "[CKShootingStarEffect特效]"
+    assert describe_part({"type": "text_effect", "effect": "shake", "text": "会谢"}) == "[文字效果「摇晃」：会谢]"
+    assert describe_part({"type": "text_effect", "effect": "newthing", "text": "x"}) == "[文字效果「newthing」：x]"

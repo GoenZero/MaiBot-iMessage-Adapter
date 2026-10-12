@@ -13,6 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .effects import effect_name, text_effect_name
+
 PLATFORM = "imessage"
 # 文本文件交给 AI 的最大字数，超出部分截掉
 MAX_TEXT_FILE_CHARS = 6000
@@ -20,21 +22,6 @@ MAX_TEXT_FILE_CHARS = 6000
 # 图片加载器：输入（临时文件路径, MIME），返回 (base64, 说明)；失败返回 (None, 原因)
 ImageLoader = Callable[[str, str], Tuple[Optional[str], str]]
 
-EFFECT_NAMES: Dict[str, str] = {
-    "com.apple.MobileSMS.expressivesend.impact": "重击",
-    "com.apple.MobileSMS.expressivesend.loud": "放大",
-    "com.apple.MobileSMS.expressivesend.gentle": "轻柔",
-    "com.apple.MobileSMS.expressivesend.invisibleink": "隐形墨水",
-    "com.apple.messages.effect.CKConfettiEffect": "五彩纸屑",
-    "com.apple.messages.effect.CKFireworksEffect": "烟花",
-    "com.apple.messages.effect.CKBalloonEffect": "气球",
-    "com.apple.messages.effect.CKHeartEffect": "爱心",
-    "com.apple.messages.effect.CKLasersEffect": "激光",
-    "com.apple.messages.effect.CKHappyBirthdayEffect": "庆祝",
-    "com.apple.messages.effect.CKSparklesEffect": "闪光",
-    "com.apple.messages.effect.CKSpotlightEffect": "聚光灯",
-    "com.apple.messages.effect.CKEchoEffect": "回声",
-}
 
 
 def _human_size(size: Any) -> str:
@@ -127,7 +114,9 @@ def describe_part(part: Dict[str, Any]) -> str:
         return f"[投票] {title}：{options}".rstrip("：") if title else f"[投票] {options}".rstrip()
     if kind == "effect":
         effect = str(part.get("effect", ""))
-        return f"[{EFFECT_NAMES.get(effect, effect)}特效]"
+        return f"[{effect_name(effect)}特效]"
+    if kind == "text_effect":
+        return f"[文字效果「{text_effect_name(str(part.get('effect', '')))}」：{part.get('text', '')}]"
     if kind == "unsupported":
         return f"[暂不支持的内容：{part.get('what') or '未知'}]"
     return f"[暂不支持的内容：{kind}]"

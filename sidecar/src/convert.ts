@@ -24,6 +24,13 @@ export interface MessageLike {
   sender?: { id: string } | undefined;
   timestamp?: Date;
   space?: { id: string; type?: string };
+  // iMessage 平台附加在消息上的字段（spectrum-ts 把它们直接放在消息对象上）
+  /** 气泡、屏幕特效的编号；对方用了特效时才有 */
+  expressiveSendStyleId?: string;
+  /** 文字格式：粗体、斜体……以及 iOS 18 文字效果（effectName） */
+  formatting?: readonly { type?: string; effectName?: string; start: number; length: number }[];
+  /** 每个附件的元数据，isSticker 表示是贴纸 */
+  attachmentMetadata?: readonly { guid?: string; isSticker?: boolean }[];
 }
 
 export type InboundPart =
@@ -32,6 +39,7 @@ export type InboundPart =
   | { type: "file"; mime: string; name: string; size?: number; note?: string }
   | { type: "text_file"; path: string; mime: string; name: string; size: number }
   | { type: "voice"; id?: string; mime: string; duration?: number; size?: number; path?: string; note?: string }
+  | { type: "text_effect"; effect: string; text: string }
   | { type: "contact"; name?: string; phones: string[]; emails: string[]; org?: string; urls: string[] }
   | { type: "link"; url: string }
   | { type: "app"; url?: string; caption?: string }
@@ -457,6 +465,38 @@ function changeEvent(content: ContentLike, options: ConvertOptions): ControlEven
   return { type: "other", content_type: kind };
 }
 
+/** 消息正文（文字、引用回复里的文字）；文字效果的位置按它来算。 */
+function plainText(content: ContentLike | undefined, depth = 0): string {
+  if (!content || depth > MAX_DEPTH) return "";
+  if (typeof content.text === "string") return content.text;
+  if (content.type === "reply" || content.type === "effect") return plainText(asContent(content.content), depth + 1);
+  return "";
+}
+
+/**
+ * 对方用的特效：spectrum-ts 收消息时不会把特效包成 effect 内容，只把编号放在消息的附加字段上
+ * （真机第三轮发现：之前 AI 根本看不到特效）。组合消息的每一项各自带字段，也要看。
+ */
+function messageEffects(message: MessageLike, depth = 0): InboundPart[] {
+  const found: InboundPart[] = [];
+  const effect = str(message.expressiveSendStyleId);
+  if (effect) found.push({ type: "effect", effect });
+  const text = plainText(message.content);
+  for (const format of message.formatting ?? []) {
+    const name = str(format.effectName);
+    if (!name) continue; // 粗体、斜体等普通格式不用告诉 AI
+    const piece = text.slice(format.start, format.start + format.length).trim();
+    found.push({ type: "text_effect", effect: name, text: piece || text.trim() });
+  }
+  if (depth < MAX_DEPTH && message.content?.type === "group" && Array.isArray(message.content.items)) {
+    for (const item of message.content.items) {
+      const inner = asMessage(item);
+      if (inner) found.push(...messageEffects(inner, depth + 1));
+    }
+  }
+  return found;
+}
+
 /** 把一条 SDK 消息转换成发给 Python 的结果。 */
 export async function convertInbound(message: MessageLike, options: ConvertOptions): Promise<InboundResult> {
   // 自己发出的消息回显不是用户的话，不转发
@@ -479,6 +519,7 @@ export async function convertInbound(message: MessageLike, options: ConvertOptio
   }
 
   const { parts, replyTo } = await convertContent(message.content, options, 0);
+  parts.push(...messageEffects(message));
   // 规则：绝不交出空消息，至少给一个占位
   const finalParts = parts.length ? parts : [{ type: "unsupported", what: "空白消息" } satisfies InboundPart];
   const data: InboundMessage = {

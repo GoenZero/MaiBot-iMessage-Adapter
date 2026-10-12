@@ -311,3 +311,33 @@ test("对方编辑、撤回、取消点赞变成控制事件，并带上原来�
   const other = await convertInbound(msg("o", { type: "custom", raw: { imessage_type: "unsupported-message" } }), opts);
   assert.equal(other.kind, "message");
 });
+
+test("对方用的气泡特效、iOS 18 文字效果会告诉 AI（spectrum-ts 只放在消息附加字段上）", async () => {
+  const bubble = await convertInbound(
+    { ...msg("e1", { type: "text", text: "是这样发送的对吗" }), expressiveSendStyleId: "com.apple.MobileSMS.expressivesend.loud" },
+    options(),
+  );
+  assert.ok(bubble.kind === "message");
+  assert.deepEqual(bubble.data.parts, [
+    { type: "text", text: "是这样发送的对吗" },
+    { type: "effect", effect: "com.apple.MobileSMS.expressivesend.loud" },
+  ]);
+
+  const shaking = await convertInbound(
+    {
+      ...msg("e2", { type: "text", text: "我真的会谢" }),
+      formatting: [
+        { type: "bold", start: 0, length: 1 },
+        { type: "effect", effectName: "shake", start: 3, length: 2 },
+      ],
+    },
+    options(),
+  );
+  assert.ok(shaking.kind === "message");
+  assert.deepEqual(shaking.data.parts.slice(1), [{ type: "text_effect", effect: "shake", text: "会谢" }]);
+
+  // 没有特效的普通消息不受影响
+  const plain = await convertInbound({ ...msg("e3", { type: "text", text: "hi" }), formatting: [] }, options());
+  assert.ok(plain.kind === "message");
+  assert.equal(plain.data.parts.length, 1);
+});

@@ -19,6 +19,7 @@ import re
 
 from .core.bridge import SidecarError
 from .core.capabilities import capability
+from .core.effects import EFFECT_NAMES
 from .core.lru import LruDict
 
 if TYPE_CHECKING:
@@ -48,28 +49,13 @@ UNSEND_DESCRIPTION = (
     "只能撤回你自己 2 分钟内发的消息。要撤回点赞，请用 imessage_react 并填 remove=true。"
 )
 
-EFFECT_NAMES = {
-    "balloons": "气球",
-    "confetti": "彩纸",
-    "fireworks": "烟花",
-    "celebration": "庆祝",
-    "heart": "爱心",
-    "lasers": "激光",
-    "sparkles": "闪光",
-    "spotlight": "聚光灯",
-    "echo": "回声",
-    "slam": "重击",
-    "loud": "大声",
-    "gentle": "轻声",
-    "invisible": "隐形墨水",
-}
 EFFECT_DESCRIPTION = (
     "发一条带 iMessage 特效的消息，就像在 iPhone 上长按发送键选特效。"
     "只在特别的时刻用：生日、节日祝福、祝贺好消息、表白、强调一句很重要的话。平时聊天不要用，一天最多一两次。"
     "这条消息就是你这次的回复，发完不要再用 reply 重复同样的话。"
-    "effect 可选，全屏特效：balloons=气球，confetti=彩纸，fireworks=烟花，celebration=庆祝，heart=爱心，"
-    "lasers=激光，sparkles=闪光，spotlight=聚光灯，echo=回声；"
-    "气泡特效：slam=重击，loud=大声，gentle=轻声，invisible=隐形墨水（对方要用手指擦开才能看到）。"
+    "effect 可选，气泡特效：slam=震撼，loud=放大，gentle=缩小，invisible=隐形墨水（对方要用手指擦开才能看到）；"
+    "屏幕特效：echo=回声，spotlight=聚光灯，balloons=气球，confetti=五彩纸屑，heart=爱心，lasers=激光，"
+    "fireworks=烟花，celebration=庆祝，sparkles=闪光。"
 )
 MAX_POLL_OPTIONS = 12
 POLL_DESCRIPTION = (
