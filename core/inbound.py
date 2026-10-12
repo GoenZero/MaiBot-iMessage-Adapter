@@ -117,6 +117,8 @@ def describe_part(part: Dict[str, Any]) -> str:
         return f"[{effect_name(effect)}特效]"
     if kind == "text_effect":
         return f"[文字效果「{text_effect_name(str(part.get('effect', '')))}」：{part.get('text', '')}]"
+    if kind == "sticker":
+        return "[贴纸]"
     if kind == "unsupported":
         return f"[暂不支持的内容：{part.get('what') or '未知'}]"
     return f"[暂不支持的内容：{kind}]"
@@ -142,11 +144,13 @@ def build_raw_message(parts: List[Dict[str, Any]], load_image: ImageLoader) -> T
                 add_text(text)
         elif kind == "image":
             data, reason = load_image(str(part.get("path", "")), str(part.get("mime", "")))
+            # 贴纸交给 MaiBot 的表情包系统（它会按表情包识别、描述），普通图片走识图
+            segment_type = "emoji" if part.get("sticker") else "image"
             if data:
-                segments.append({"type": "image", "data": "", "binary_data_base64": data, "hash": ""})
+                segments.append({"type": segment_type, "data": "", "binary_data_base64": data, "hash": ""})
                 has_image = True
             else:
-                add_text(f"[图片（没能读取：{reason}）]")
+                add_text(f"[{'贴纸' if part.get('sticker') else '图片'}（没能读取：{reason}）]")
         else:
             add_text(describe_part(part))
 
@@ -173,6 +177,8 @@ def build_maibot_message(data: Dict[str, Any], load_image: ImageLoader) -> Dict[
         },
         "raw_message": raw_message,
         "is_picture": has_image,
+        # 整条消息只有贴纸时，按表情包消息交给 MaiBot
+        "is_emoji": bool(raw_message) and all(segment["type"] == "emoji" for segment in raw_message),
     }
 
     reply_to = data.get("reply_to")

@@ -35,7 +35,8 @@ export interface MessageLike {
 
 export type InboundPart =
   | { type: "text"; text: string }
-  | { type: "image"; path: string; mime: string; name: string; size: number }
+  | { type: "image"; path: string; mime: string; name: string; size: number; sticker?: boolean }
+  | { type: "sticker" }
   | { type: "file"; mime: string; name: string; size?: number; note?: string }
   | { type: "text_file"; path: string; mime: string; name: string; size: number }
   | { type: "voice"; id?: string; mime: string; duration?: number; size?: number; path?: string; note?: string }
@@ -99,6 +100,8 @@ export interface ConvertOptions {
   voiceRetryDelayMs?: number;
   /** 每次下载语音的最长等待（毫秒）。下载期间后面的消息都要排队，所以要有上限。 */
   voiceTimeoutMs?: number;
+  /** 这条消息里哪些附件是贴纸（按附件编号）；由 convertInbound 按消息的附加字段填写。 */
+  stickerIds?: ReadonlySet<string>;
   /** 按编号查已缓存的消息（对方编辑、撤回时，用来告诉 AI 原来那句是什么）。 */
   lookupMessage?: (id: string) => MessageLike | undefined;
   /** 记录警告日志（下载失败等），不影响转换结果。 */
@@ -273,7 +276,10 @@ async function convertContent(
       }
       try {
         const saved = await options.saveImage(content);
-        return { parts: [{ type: "image", path: saved.path, mime, name, size: saved.size }] };
+        const part: InboundPart = { type: "image", path: saved.path, mime, name, size: saved.size };
+        // 贴纸（包括第三方贴纸包、Memoji、照片抠出来的贴纸）在 iMessage 里都是带「贴纸」标记的图片
+        if (options.stickerIds?.has(str(content.id) ?? "")) part.sticker = true;
+        return { parts: [part] };
       } catch (error) {
         const code = (error as { code?: unknown }).code === "TOO_LARGE" ? "too_large" : "download_failed";
         options.warn(`图片附件下载失败（${name}，${mime}）：${String((error as Error).message ?? error)}`);
@@ -465,6 +471,64 @@ function changeEvent(content: ContentLike, options: ConvertOptions): ControlEven
   return { type: "other", content_type: kind };
 }
 
+/** 附加字段里标着贴纸的附件编号（组合消息的每一项各自带字段）。 */
+function stickerIdsOf(message: MessageLike, depth = 0, found = new Set<string>()): Set<string> {
+  for (const meta of message.attachmentMetadata ?? []) {
+    if (meta.isSticker && meta.guid) found.add(meta.guid);
+  }
+  if (depth < MAX_DEPTH && message.content?.type === "group" && Array.isArray(message.content.items)) {
+    for (const item of message.content.items) {
+      const inner = asMessage(item);
+      if (inner) stickerIdsOf(inner, depth + 1, found);
+    }
+  }
+  return found;
+}
+
+/**
+ * 对方把贴纸贴在某条消息上（打包补丁转发的 message.stickerPlaced，见 build-config.mjs）。
+ * 变成一条「引用那条消息 + 贴纸图片」的普通消息：贴纸是对方真正发出的东西，按对方的消息交给 MaiBot。
+ */
+async function placedSticker(
+  message: MessageLike,
+  options: ConvertOptions,
+  meta: { chatId: string; senderId: string; timestamp: number },
+): Promise<InboundResult | undefined> {
+  if (message.content.type !== "custom") return undefined;
+  const raw = message.content.raw as Record<string, unknown> | undefined;
+  if (raw?.imessage_change !== "message.stickerPlaced") return undefined;
+  const guid = str(raw.message_guid) ?? "";
+  const partIndex = num(raw.part_index);
+  const targetId = partIndex !== undefined ? `p:${partIndex}/${guid}` : guid;
+  const sticker = asContent(raw.sticker);
+  let part: InboundPart = { type: "sticker" };
+  if (sticker) {
+    const mime = String(sticker.mimeType ?? "image/png").toLowerCase();
+    try {
+      const saved = await options.saveImage(sticker);
+      part = { type: "image", path: saved.path, mime, name: String(sticker.name ?? "sticker"), size: saved.size, sticker: true };
+    } catch (error) {
+      options.warn(`贴纸下载失败：${String((error as Error).message ?? error)}`);
+    }
+  }
+  const original = options.lookupMessage?.(targetId) ?? options.lookupMessage?.(guid);
+  const replyTo: ReplyRef = { message_id: original?.id ?? targetId };
+  const text = previewText(original?.content);
+  if (text) replyTo.text = text;
+  return {
+    kind: "message",
+    data: {
+      message_id: message.id,
+      chat_id: meta.chatId,
+      chat_type: message.space?.type ?? "dm",
+      sender_id: meta.senderId,
+      timestamp: meta.timestamp,
+      parts: [part],
+      reply_to: replyTo,
+    },
+  };
+}
+
 /** 消息正文（文字、引用回复里的文字）；文字效果的位置按它来算。 */
 function plainText(content: ContentLike | undefined, depth = 0): string {
   if (!content || depth > MAX_DEPTH) return "";
@@ -506,6 +570,9 @@ export async function convertInbound(message: MessageLike, options: ConvertOptio
   const senderId = message.sender?.id ?? "";
   const timestamp = message.timestamp instanceof Date ? message.timestamp.getTime() : Date.now();
 
+  const placed = await placedSticker(message, options, { chatId, senderId, timestamp });
+  if (placed) return placed;
+
   const change = changeEvent(message.content, options);
   if (change) {
     return { kind: "control", data: { event_id: message.id, chat_id: chatId, sender_id: senderId, timestamp, event: change } };
@@ -518,7 +585,8 @@ export async function convertInbound(message: MessageLike, options: ConvertOptio
     };
   }
 
-  const { parts, replyTo } = await convertContent(message.content, options, 0);
+  const stickerIds = stickerIdsOf(message);
+  const { parts, replyTo } = await convertContent(message.content, stickerIds.size ? { ...options, stickerIds } : options, 0);
   parts.push(...messageEffects(message));
   // 规则：绝不交出空消息，至少给一个占位
   const finalParts = parts.length ? parts : [{ type: "unsupported", what: "空白消息" } satisfies InboundPart];

@@ -39,14 +39,15 @@ export const UNTITLED_POLL = "__imessage_untitled_poll__";
  * 1. 投票标题：Photon 送回来的投票（包括 AI 自己发起的）标题是空的，而 SDK 缓存投票时要求标题非空，
  *    缓存失败后对方的投票事件全部被丢掉。让空标题变成 UNTITLED_POLL，侧车再把真正的标题补回来
  *    （见 src/polls.ts）。
- * 2. 对方编辑、撤回消息、取消点赞：Photon 的消息流里有这三种事件（message.edited / message.unsent /
- *    message.reactionRemoved），但 SDK 不转发，只记一条调试日志。这里把它们转成 custom 内容
+ * 2. 对方编辑、撤回消息、取消点赞、在消息上贴贴纸：Photon 的消息流里有这几种事件（message.edited /
+ *    message.unsent / message.reactionRemoved / message.stickerPlaced），但 SDK 不转发，只记一条调试日志。
+ *    贴纸事件带上可下载的贴纸图片（第三阶段新增）。这里把它们转成 custom 内容
  *    （raw.imessage_change 标明是哪种），侧车再变成控制事件（见 src/convert.ts）。机器人自己的操作不转发。
  * 3. 对方发起投票：SDK 只把投票记进缓存，不转发（真机第三轮发现，AI 看不到对方发起的投票）。
  *    这里把「投票已创建」转成一条普通的投票消息。机器人自己发起的投票在外层已经被过滤掉。
  */
 const CHANGE_FORWARDER = `
-	if (event.type === "message.edited" || event.type === "message.unsent" || event.type === "message.reactionRemoved") {
+	if (event.type === "message.edited" || event.type === "message.unsent" || event.type === "message.reactionRemoved" || event.type === "message.stickerPlaced") {
 		const changeId = \`\${event.messageGuid}:\${event.type}:\${event.sequence}\`;
 		if (event.isFromMe) return { cursor, id: changeId, values: [] };
 		const peer = dmPeerFromChatGuid(event.chatGuid);
@@ -60,7 +61,15 @@ const CHANGE_FORWARDER = `
 				message_guid: event.messageGuid,
 				text: event.content?.text,
 				reaction: event.reaction ? (reactionEmoji(event.reaction) ?? event.reaction.kind) : undefined,
-				part_index: event.targetPartIndex
+				part_index: event.targetPartIndex,
+				sticker: event.sticker ? asAttachment({
+					id: event.sticker.guid,
+					name: event.sticker.fileName,
+					mimeType: normalizeAppleAttachmentMimeType(event.sticker),
+					size: event.sticker.totalBytes,
+					read: () => downloadPrimaryAttachment(client, event.sticker.guid),
+					stream: async () => downloadPrimaryAttachmentStream(client, event.sticker.guid)
+				}) : undefined
 			})
 		}] };
 	}

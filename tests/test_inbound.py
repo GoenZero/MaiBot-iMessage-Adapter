@@ -126,3 +126,22 @@ def test_effect_labels_match_iphone_names():
     assert describe_part({"type": "effect", "effect": "com.apple.messages.effect.CKShootingStarEffect"}) == "[CKShootingStarEffect特效]"
     assert describe_part({"type": "text_effect", "effect": "shake", "text": "会谢"}) == "[文字效果「摇晃」：会谢]"
     assert describe_part({"type": "text_effect", "effect": "newthing", "text": "x"}) == "[文字效果「newthing」：x]"
+
+
+
+def test_sticker_goes_to_maibot_emoji_system():
+    sticker = {"message_id": "s1", "chat_id": "c", "sender_id": "+1", "timestamp": 0,
+               "parts": [{"type": "image", "path": "/tmp/x.png", "mime": "image/png", "name": "x.png", "size": 3, "sticker": True}]}
+    message = build_maibot_message(sticker, loader_ok)
+    assert message["raw_message"][0]["type"] == "emoji"
+    assert message["is_emoji"] is True
+
+    # 贴在某条消息上的贴纸：引用那条消息 + 贴纸
+    placed = dict(sticker, reply_to={"message_id": "BOT-1", "text": "晚安"})
+    message = build_maibot_message(placed, loader_ok)
+    assert [seg["type"] for seg in message["raw_message"]] == ["reply", "emoji"]
+
+    mixed = dict(sticker, parts=[{"type": "text", "text": "哈"}, *sticker["parts"]])
+    assert build_maibot_message(mixed, loader_ok)["is_emoji"] is False
+    missing = dict(sticker, parts=[{"type": "sticker"}])
+    assert build_maibot_message(missing, loader_ok)["raw_message"] == [{"type": "text", "data": "[贴纸]"}]

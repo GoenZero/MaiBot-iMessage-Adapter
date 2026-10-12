@@ -217,7 +217,7 @@ REGISTRY: Sequence[Capability] = (
     ),
     Capability(
         key="inbound_media",
-        title="接收图片（HEIC 转 JPEG）、名片、引用和组合消息",
+        title="接收图片（HEIC 转 JPEG）、贴纸、特效、名片、引用和组合消息",
         photon_call="app.messages",
         plan="free",
         kind="inbound",

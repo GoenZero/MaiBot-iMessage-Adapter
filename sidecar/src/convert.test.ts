@@ -341,3 +341,37 @@ test("对方用的气泡特效、iOS 18 文字效果会告诉 AI（spectrum-ts �
   assert.ok(plain.kind === "message");
   assert.equal(plain.data.parts.length, 1);
 });
+
+test("贴纸：单独发的贴纸标成贴纸；贴在消息上的贴纸变成引用那条消息的贴纸", async () => {
+  const stickerImage: ContentLike = { type: "attachment", id: "ATT-1", name: "sticker.heic", mimeType: "image/heic", size: 100 };
+  const alone = await convertInbound(
+    { ...msg("s1", stickerImage), attachmentMetadata: [{ guid: "ATT-1", isSticker: true }] },
+    options(),
+  );
+  assert.ok(alone.kind === "message");
+  assert.equal((alone.data.parts[0] as { sticker?: boolean }).sticker, true);
+  // 普通照片不受影响
+  const photo = await convertInbound({ ...msg("s2", image("p.jpg")), attachmentMetadata: [{ guid: "att-p.jpg", isSticker: false }] }, options());
+  assert.ok(photo.kind === "message");
+  assert.equal((photo.data.parts[0] as { sticker?: boolean }).sticker, undefined);
+
+  const cached: Record<string, MessageLike> = { "BOT-1": msg("BOT-1", { type: "text", text: "晚安" }, { direction: "outbound" }) };
+  const placed = await convertInbound(
+    msg("BOT-1:message.stickerPlaced:9", {
+      type: "custom",
+      raw: { imessage_change: "message.stickerPlaced", message_guid: "BOT-1", sticker: { type: "attachment", id: "ATT-2", name: "cat.png", mimeType: "image/png" } },
+    }),
+    options({ lookupMessage: (id) => cached[id] }),
+  );
+  assert.ok(placed.kind === "message");
+  assert.deepEqual(placed.data.reply_to, { message_id: "BOT-1", text: "晚安" });
+  assert.deepEqual(placed.data.parts, [{ type: "image", path: "/tmp/cat.png", mime: "image/png", name: "cat.png", size: 1234, sticker: true }]);
+
+  // 拿不到贴纸图片时也不丢：给一个「贴纸」占位
+  const noImage = await convertInbound(
+    msg("X:message.stickerPlaced:1", { type: "custom", raw: { imessage_change: "message.stickerPlaced", message_guid: "X" } }),
+    options(),
+  );
+  assert.ok(noImage.kind === "message");
+  assert.deepEqual(noImage.data.parts, [{ type: "sticker" }]);
+});
