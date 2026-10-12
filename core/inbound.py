@@ -118,7 +118,8 @@ def describe_part(part: Dict[str, Any]) -> str:
     if kind == "text_effect":
         name = text_effect_name(str(part.get("effect", "")))
         text = str(part.get("text") or "").strip()
-        return f"[文字效果「{name}」：{text}]" if text else f"[文字效果「{name}」]"
+        # 写明是正文里哪几个字带效果（真机测试：只写「效果：文字」时，AI 分不清效果套在哪几个字上）
+        return f"[文字效果：正文里「{text}」这几个字带「{name}」效果]" if text else f"[文字效果「{name}」]"
     if kind == "sticker":
         return "[贴纸]"
     if kind == "unsupported":

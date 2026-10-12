@@ -124,8 +124,8 @@ def test_effect_labels_match_iphone_names():
     assert describe_part({"type": "effect", "effect": "com.apple.MobileSMS.expressivesend.impact"}) == "[震撼特效]"
     assert describe_part({"type": "effect", "effect": "com.apple.MobileSMS.expressivesend.gentle"}) == "[缩小特效]"
     assert describe_part({"type": "effect", "effect": "com.apple.messages.effect.CKShootingStarEffect"}) == "[CKShootingStarEffect特效]"
-    assert describe_part({"type": "text_effect", "effect": "shake", "text": "会谢"}) == "[文字效果「摇晃」：会谢]"
-    assert describe_part({"type": "text_effect", "effect": "newthing", "text": "x"}) == "[文字效果「newthing」：x]"
+    assert describe_part({"type": "text_effect", "effect": "shake", "text": "会谢"}) == "[文字效果：正文里「会谢」这几个字带「摇晃」效果]"
+    assert describe_part({"type": "text_effect", "effect": "newthing", "text": "x"}) == "[文字效果：正文里「x」这几个字带「newthing」效果]"
 
 
 
@@ -151,4 +151,4 @@ def test_sticker_goes_to_maibot_emoji_system():
 def test_text_effect_without_text():
     from imessage_adapter_under_test.core.inbound import describe_part
 
-    assert describe_part({"type": "text_effect", "effect": "explode", "text": ""}) == "[文字效果「爆炸」]"
+    assert describe_part({"type": "text_effect", "effect": "explode", "text": ""}) == "[文字效果「爆发」]"

@@ -61,6 +61,7 @@ EFFECT_DESCRIPTION = (
     "effect 可选，气泡特效：slam=震撼，loud=放大，gentle=缩小，invisible=隐形墨水（对方要用手指擦开才能看到）；"
     "屏幕特效：echo=回声，spotlight=聚光灯，balloons=气球，confetti=五彩纸屑，heart=爱心，lasers=激光，"
     "fireworks=烟花，celebration=庆祝，sparkles=闪光。"
+    "iOS 18 的文字效果（选中几个字套上的摇晃、爆发、抖动等）发不了，对方要的话如实说做不到，不要拿别的特效顶替。"
 )
 MAX_POLL_OPTIONS = 12
 POLL_DESCRIPTION = (
@@ -76,6 +77,7 @@ BACKGROUND_DESCRIPTION = (
 STICKER_DESCRIPTION = (
     "从你的表情包库里挑一张符合情绪的表情包，当作贴纸贴在对方的某条消息气泡上（就像 iPhone 上长按消息贴贴纸），"
     "不会单独发一条消息。适合想对某句话做个俏皮、可爱的回应时；不要频繁用，一轮对话最多一次。"
+    "对方让你「贴个贴纸」「给这句贴贴纸」时就用这个工具，不要改成另发一张表情包图片。"
     "emotion 写想表达的情绪，例如 开心、无语、害羞、委屈。"
 )
 SHARE_CONTACT_DESCRIPTION = (

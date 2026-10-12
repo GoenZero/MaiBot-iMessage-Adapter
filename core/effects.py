@@ -36,7 +36,7 @@ TEXT_EFFECT_NAMES: Dict[str, str] = {
     "small": "缩小",
     "shake": "摇晃",
     "nod": "点头",
-    "explode": "爆炸",
+    "explode": "爆发",  # 和 iPhone 上的叫法一致（真机截图核对）
     "ripple": "波纹",
     "bloom": "绽放",
     "jitter": "抖动",
