@@ -8,6 +8,9 @@
  *
  * 这里只依赖消息的「形状」，不依赖 SDK 的具体类，方便用假对象做单元测试。
  */
+import { rm } from "node:fs/promises";
+
+import { guarded } from "./media.ts";
 import { sentPollTitle, UNTITLED_POLL } from "./polls.ts";
 
 /** SDK 内容对象的最小形状。 */
@@ -89,8 +92,11 @@ export type InboundResult =
   | { kind: "control"; data: InboundControl }
   | { kind: "echo" };
 
-/** 保存图片附件的回调；失败时抛异常，由转换器降级成文件说明。 */
-export type SaveImage = (content: ContentLike) => Promise<{ path: string; size: number }>;
+/**
+ * 保存附件的回调；失败时抛异常，由转换器降级成文件说明。
+ * signal 被取消时应中止下载并删掉半成品（语音下载超时会用到）。
+ */
+export type SaveImage = (content: ContentLike, signal?: AbortSignal) => Promise<{ path: string; size: number }>;
 
 export interface ConvertOptions {
   saveImage: SaveImage;
@@ -220,12 +226,19 @@ function contactPart(content: ContentLike): InboundPart {
   return part;
 }
 
+/** 取卡片详情最多等多久：收消息是一条一条处理的，卡住会挡住后面的消息。 */
+const APP_DETAIL_TIMEOUT_MS = 10_000;
+
 async function appPart(content: ContentLike): Promise<InboundPart> {
   const part: InboundPart = { type: "app" };
   try {
-    if (typeof content.url === "function") part.url = String(await (content.url as () => Promise<unknown>)());
+    if (typeof content.url === "function") {
+      part.url = String(await guarded((content.url as () => Promise<unknown>)(), APP_DETAIL_TIMEOUT_MS, undefined, "读取卡片链接"));
+    }
     if (typeof content.layout === "function") {
-      const layout = (await (content.layout as () => Promise<unknown>)()) as { caption?: unknown } | undefined;
+      const layout = (await guarded((content.layout as () => Promise<unknown>)(), APP_DETAIL_TIMEOUT_MS, undefined, "读取卡片内容")) as
+        | { caption?: unknown }
+        | undefined;
       const caption = str(layout?.caption);
       if (caption) part.caption = caption;
     }
@@ -377,25 +390,40 @@ async function convertContent(
 
 const VOICE_ATTEMPTS = 3;
 
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`超过 ${ms / 1000} 秒`)), ms);
-  });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+/**
+ * 下载一次语音，最多等 ms 毫秒。超时就取消这次下载（下载函数会删掉半成品）；
+ * 万一下载函数没理会取消、之后才下载完，也把那个文件删掉，不留孤儿文件（外部审查发现）。
+ */
+async function voiceAttempt(content: ContentLike, options: ConvertOptions, ms: number): Promise<string> {
+  const controller = new AbortController();
+  const work = options.saveVoice!(content, controller.signal);
+  let abandoned = false;
+  work.then(
+    (saved) => {
+      if (abandoned) void rm(saved.path, { force: true }).catch(() => undefined);
+    },
+    () => undefined,
+  );
+  try {
+    return (await guarded(work, ms, undefined, "语音下载")).path;
+  } catch (error) {
+    abandoned = true;
+    controller.abort();
+    throw error;
+  }
 }
 
 /**
  * 下载语音。刚收到时附件可能还在从 Apple 传到服务器，下载会失败：等一会再试，最多 3 次，
  * 每次最多等 15 秒（下载期间后面的消息要排队）。都失败返回 undefined（调用方会让 AI 得体地
- * 告诉对方没听清）。超时放弃的那次如果之后才下载完，临时文件会在插件下次启动时清掉。
+ * 告诉对方没听清）。
  */
 async function downloadVoice(content: ContentLike, options: ConvertOptions): Promise<string | undefined> {
   const delay = options.voiceRetryDelayMs ?? 2000;
   const limit = options.voiceTimeoutMs ?? 15_000;
   for (let attempt = 1; attempt <= VOICE_ATTEMPTS; attempt++) {
     try {
-      return (await withTimeout(options.saveVoice!(content), limit)).path;
+      return await voiceAttempt(content, options, limit);
     } catch (error) {
       const code = (error as { code?: unknown }).code;
       options.warn(`语音下载失败（第 ${attempt} 次）：${String((error as Error).message ?? error)}`);

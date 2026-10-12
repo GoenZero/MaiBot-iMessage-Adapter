@@ -199,14 +199,23 @@ log("INFO", `已连接 Photon（spectrum-ts ${SPECTRUM_VERSION}，Node ${process
 
 const MAX_TEXT_FILE_BYTES = envInt("MAX_TEXT_FILE_BYTES", 256 * 1024);
 
+/**
+ * 下载卡住多久就放弃（毫秒）。不限总时长：只要一直有数据进来，大文件慢慢下也不会被打断；
+ * 真正卡住不动的才放弃，免得挡住后面所有消息。第一块数据给得宽一些：
+ * Photon 有时要先从 Apple 取完附件才开始传（实测 13.8MB 的图片要等 40 多秒）。
+ */
+const DOWNLOAD_FIRST_CHUNK_MS = envInt("DOWNLOAD_FIRST_CHUNK_MS", 120_000);
+const DOWNLOAD_IDLE_MS = envInt("DOWNLOAD_IDLE_MS", 60_000);
+
 /** 下载附件并记录耗时（用于排查大文件接收慢的问题）。 */
-async function downloadWithTiming(content: ContentLike, limit: number): Promise<{ path: string; size: number }> {
+async function downloadWithTiming(content: ContentLike, limit: number, signal?: AbortSignal): Promise<{ path: string; size: number }> {
   const started = Date.now();
   const saved = await saveToTempFile(
     content as unknown as StreamSource,
     mediaDir,
     safeExtension(String(content.name ?? ""), String(content.mimeType ?? "")),
     limit,
+    { signal, firstChunkMs: DOWNLOAD_FIRST_CHUNK_MS, idleMs: DOWNLOAD_IDLE_MS },
   );
   const seconds = (Date.now() - started) / 1000;
   log(
@@ -221,15 +230,15 @@ const convertOptions: ConvertOptions = {
   maxImageBytes: maxAttachmentBytes,
   maxTextFileBytes: MAX_TEXT_FILE_BYTES,
   warn: (message: string) => log("WARN", message),
-  saveImage: (content: ContentLike) => downloadWithTiming(content, maxAttachmentBytes),
+  saveImage: (content: ContentLike, signal?: AbortSignal) => downloadWithTiming(content, maxAttachmentBytes, signal),
 };
 // 读取文本文件可在 WebUI 关闭（READ_TEXT_FILES=0）
 if (process.env.READ_TEXT_FILES !== "0") {
-  convertOptions.saveTextFile = (content: ContentLike) => downloadWithTiming(content, MAX_TEXT_FILE_BYTES);
+  convertOptions.saveTextFile = (content: ContentLike, signal?: AbortSignal) => downloadWithTiming(content, MAX_TEXT_FILE_BYTES, signal);
 }
 // 开启「语音转文字」（TRANSCRIBE_VOICE=1）时才下载语音
 if (process.env.TRANSCRIBE_VOICE === "1") {
-  convertOptions.saveVoice = (content: ContentLike) => downloadWithTiming(content, maxAttachmentBytes);
+  convertOptions.saveVoice = (content: ContentLike, signal?: AbortSignal) => downloadWithTiming(content, maxAttachmentBytes, signal);
 }
 
 try {

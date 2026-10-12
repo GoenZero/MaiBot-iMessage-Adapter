@@ -256,6 +256,36 @@ test("语音：开启转文字时下载（失败会重试），未开启时只�
   assert.equal((stuck.data.parts[0] as { note?: string }).note, "download_failed");
 });
 
+test("语音下载超时后取消那次下载，迟到的文件也会删掉", async () => {
+  const { mkdtemp, readdir, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "imsg-voice-"));
+  const signals: AbortSignal[] = [];
+  let n = 0;
+  const result = await convertInbound(
+    msg("v-late", { type: "voice", id: "v1", mimeType: "audio/x-caf", duration: 4 }),
+    options({
+      voiceRetryDelayMs: 0,
+      voiceTimeoutMs: 20,
+      // 不理会取消，超时之后才写完文件
+      saveVoice: async (_content, signal) => {
+        if (signal) signals.push(signal);
+        const path = join(dir, `late-${n++}.caf`);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        await writeFile(path, "x");
+        return { path, size: 1 };
+      },
+    }),
+  );
+  assert.ok(result.kind === "message");
+  assert.equal((result.data.parts[0] as { note?: string }).note, "download_failed");
+  assert.equal(signals.length, 3);
+  assert.ok(signals.every((signal) => signal.aborted));
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.deepEqual(await readdir(dir), []);
+});
+
 test("对方发起的投票没有标题时，只列选项", async () => {
   const { UNTITLED_POLL } = await import("./polls.ts");
   const result = await convertInbound(msg("POLL-9", { type: "poll", title: UNTITLED_POLL, options: [{ title: "海边" }, { title: "爬山" }] }), options());

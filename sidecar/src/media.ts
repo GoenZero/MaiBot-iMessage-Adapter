@@ -37,8 +37,41 @@ export function safeExtension(name: string, mimeType: string): string {
   return EXTENSION_BY_MIME[mimeType.toLowerCase()] ?? ".bin";
 }
 
+export interface SaveOptions {
+  /** 外部取消（例如语音下载超时）：取消后中止下载、删除半成品 */
+  signal?: AbortSignal;
+  /** 等第一块数据最多多久（毫秒）。Photon 有时要先从 Apple 取完附件才开始传，所以要给得宽一些 */
+  firstChunkMs?: number;
+  /** 之后两块数据之间最多隔多久（毫秒）。只要一直有数据进来，大文件下载多久都行 */
+  idleMs?: number;
+}
+
+/** 等一个异步步骤，最多等 ms 毫秒；外部取消时立刻放弃。都不设时原样等待。 */
+export async function guarded<T>(work: Promise<T>, ms: number | undefined, signal: AbortSignal | undefined, what: string): Promise<T> {
+  if (!ms && !signal) return work;
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  const stop = new Promise<never>((_, reject) => {
+    if (ms) timer = setTimeout(() => reject(new BridgeError("TIMEOUT", `${what}超过 ${Math.round(ms / 1000)} 秒没有进展`)), ms);
+    if (signal) {
+      onAbort = () => reject(new BridgeError("TIMEOUT", `${what}已取消`));
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  try {
+    return await Promise.race([work, stop]);
+  } finally {
+    clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
 /**
  * 把附件流式写进临时文件，超过 maxBytes 立即中止并删除半成品。
+ *
+ * 下载卡住（长时间没有新数据）或被取消时也中止并删除半成品：收消息是一条一条处理的，
+ * 一个卡住的下载会让后面所有消息都收不到（外部审查发现）。
  *
  * 返回写入的文件路径和实际字节数。
  */
@@ -47,16 +80,28 @@ export async function saveToTempFile(
   mediaDir: string,
   extension: string,
   maxBytes: number,
+  options: SaveOptions = {},
 ): Promise<{ path: string; size: number }> {
   const path = join(mediaDir, `in-${Date.now()}-${randomBytes(6).toString("hex")}${extension}`);
   const handle = await open(path, "wx", 0o600);
   let size = 0;
   let completed = false;
   try {
-    const reader = (await source.stream()).getReader();
+    const opening = source.stream();
+    let stream: Awaited<ReturnType<StreamSource["stream"]>>;
     try {
+      stream = await guarded(opening, options.firstChunkMs, options.signal, "附件下载");
+    } catch (error) {
+      // 放弃等待后流才打开的话，把它关掉，不留着占连接
+      void opening.then((late) => late.cancel()).catch(() => undefined);
+      throw error;
+    }
+    const reader = stream.getReader();
+    try {
+      let first = true;
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await guarded(reader.read(), first ? options.firstChunkMs : options.idleMs, options.signal, "附件下载");
+        first = false;
         if (done) break;
         const chunk = value instanceof Uint8Array ? value : new Uint8Array(value as ArrayBuffer);
         size += chunk.byteLength;
@@ -64,7 +109,8 @@ export async function saveToTempFile(
         await handle.write(chunk);
       }
     } finally {
-      await reader.cancel().catch(() => undefined);
+      // 不等取消完成：卡住的流取消也可能卡住
+      void reader.cancel().catch(() => undefined);
     }
     completed = true;
     return { path, size };
