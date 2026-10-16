@@ -1,6 +1,6 @@
 # 更新日志
 
-## [0.2.0] - 未发布（开发中，分支 feature/photon-capabilities）
+## [0.2.0] - 2026-10-16
 
 本版本按任务书 v1.2 重写，以后由 AI 维护。审计报告见 [docs/AUDIT.md](docs/AUDIT.md)。
 
