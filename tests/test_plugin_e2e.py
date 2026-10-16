@@ -157,6 +157,7 @@ def test_status_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     sent = [p for p in host.of("cap.call") if p["capability"] == "send.text"]
     text = sent[-1]["args"]["text"]
     assert "✅ 已连接" in text and "TOPSECRET" not in text
+    assert sent[-1]["args"]["storage_message"] is False  # 状态信息不进聊天记录和记忆
 
 
 def test_node_probe_reports_missing_exec_bit(tmp_path: Path) -> None:

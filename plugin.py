@@ -664,7 +664,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         lines.append(f"机器人号码：{self._bot_account() or '未填写（MaiBot 1.3.6 起必须填写，否则收不到消息）'}")
         lines.append("能力：")
         lines.extend(f"  {line}" for line in status_lines(self.config))
-        await self.ctx.send.text("\n".join(lines), stream_id)
+        await self._reply_to_command("\n".join(lines), stream_id)
         return True, "状态已显示", True
 
     @Command(
@@ -681,8 +681,13 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         else:
             await self._restart_connection_if_needed()
         with contextlib.suppress(Exception):
-            await self.ctx.send.text("🔄 iMessage 适配器已触发重连", stream_id)
+            await self._reply_to_command("🔄 iMessage 适配器已触发重连", stream_id)
         return True, "已重连", True
+
+    async def _reply_to_command(self, text: str, stream_id: str) -> None:
+        """回复管理命令。不存进聊天记录：否则 MaiBot 重启后恢复上下文、生成聊天回想和长期记忆时，
+        会把状态信息当成 AI 说过的话（真机测试发现「聊天回想」里出现了状态内容）。"""
+        await self.ctx.send.text(text, stream_id, storage_message=False)
 
 
 def create_plugin() -> IMessageAdapterPlugin:
