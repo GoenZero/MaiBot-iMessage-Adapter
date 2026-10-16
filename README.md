@@ -222,6 +222,15 @@ npm run build
 python -m pytest tests
 ```
 
+## 贡献者
+
+| 贡献者 | 做了什么 |
+|---|---|
+| Galeros（[mayan613](https://github.com/mayan613)） | 原作者：原版适配器（0.1.x） |
+| [GoenZero](https://github.com/GoenZero) | 0.2.0 的发起与维护：提出需求和设计初衷，真机测试与验收 |
+| Claude（Anthropic） | 0.2.0 的开发：重写传话层和侧车，实现各项 iMessage 能力，编写测试和文档 |
+| GPT（OpenAI Codex） | 0.2.0 的外部代码审查与压力测试 |
+
 ## 致谢
 
 - 原作者 Galeros（[mayan613/MaiBot-iMessage-Adapter](https://github.com/mayan613/MaiBot-iMessage-Adapter)）：本项目在原版的基础上改进，保留原作者署名。
