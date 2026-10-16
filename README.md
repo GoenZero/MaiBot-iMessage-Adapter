@@ -65,7 +65,7 @@ git clone https://github.com/GoenZero/MaiBot-iMessage-Adapter.git
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
-| MaiBot | 插件 SDK ≥ 2.10.0（MaiBot 1.3.5 起） | 插件宿主 |
+| MaiBot | 插件 SDK ≥ 2.10.0（MaiBot 1.3.5 起，已在 1.3.9 上验证） | 插件宿主 |
 | Node.js | ≥ 22 | 运行侧车。插件依次查找：WebUI 填写的路径 → 系统 PATH → 插件目录下的 `.nodeenv/` → 自动下载最新 LTS 版 |
 | nodeenv (PyPI) | ≥ 1.10.0 | 没有 Node.js 时自动下载，MaiBot 会自动安装这个依赖 |
 | pillow-heif (PyPI) | ≥ 1.8.0 | 把 iPhone 的 HEIC 照片转成 JPEG（有树莓派 ARM64 预编译包），MaiBot 会自动安装 |
@@ -125,11 +125,13 @@ MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.j
 
 ### 使用（MaiBot 配置）
 
-MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码，否则发不出消息。两种方式，**推荐第一种**：
+MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码。
+
+> **MaiBot 1.3.6 及以后的版本必须用第一种方式**：没填「Photon 号码」时，MaiBot 会拒收所有 iMessage 消息（日志里是「入站消息缺少明确的 account_id 归属」），第二种方式不再起作用。
 
 1. **在本插件配置页「Photon 云端 → Photon 号码」填写 Photon 分配给你的项目的号码**（带国家代码，例如 `+14155550100`）。适配器连上 Photon 时会把它作为机器人账号上报给 MaiBot，不需要再做别的设置。
    - 注意：首次填写或更改号码后，MaiBot 会把这个 iMessage 对话当作一个**新的聊天流**（MaiBot 的聊天流编号里含机器人账号），之前那条聊天流的近期上下文不会接上。
-2. 手动配置备用账号：在 MaiBot WebUI 的**插件配置页（适配器设置）→ 右上角「平台账号」→ 展开 → 备用账号**里添加，平台填 `imessage`，账号填 Photon 号码；或者直接编辑 `bot_config.toml`：
+2. 手动配置备用账号（只适用于 MaiBot 1.3.5）：在 MaiBot WebUI 的**插件配置页（适配器设置）→ 右上角「平台账号」→ 展开 → 备用账号**里添加，平台填 `imessage`，账号填 Photon 号码；或者直接编辑 `bot_config.toml`：
    ```toml
    [bot]
    platforms = ["imessage:+14155550100"]
