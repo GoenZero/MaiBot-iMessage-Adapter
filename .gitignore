@@ -1,5 +1,6 @@
 .nodeenv/
 __pycache__/
+.pytest_cache/
 config.toml
 config_back/
-docs/
+sidecar/node_modules/

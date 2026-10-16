@@ -1,19 +1,27 @@
 {
   "name": "maibot-imessage-sidecar",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "private": true,
+  "description": "Photon Spectrum bridge for the MaiBot iMessage adapter. Bundled into dist/sidecar.mjs; nothing here is installed on the device.",
+  "license": "GPL-3.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\" \"test/**/*.test.mjs\"",
+    "build": "node build.mjs",
+    "verify-bundle": "node build.mjs --verify",
+    "check": "npm run typecheck && npm test && npm run verify-bundle"
   },
   "dependencies": {
-    "spectrum-ts": "^8.2.1",
-    "ws": "^8.21.0"
+    "@spectrum-ts/core": "12.10.1",
+    "@spectrum-ts/imessage": "12.10.1"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
-    "@types/ws": "^8.18.1",
-    "typescript": "^7.0.2"
+    "@types/node": "22.20.5",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
   }
 }
