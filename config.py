@@ -8,7 +8,7 @@ from maibot_sdk import Field, PluginConfigBase
 
 # 配置结构有增减时提升版本：MaiBot 只在版本升高时把新字段写回已有的 config.toml
 SUPPORTED_CONFIG_VERSION = "2.4.0"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.2.1"
 
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_RETRY_INTERVAL = 3.0
@@ -145,16 +145,16 @@ class PhotonServerConfig(PluginConfigBase):
         description="Photon 分配给你的项目的 iMessage 号码（对方发消息的那个号码），带国家代码。",
         json_schema_extra={
             "hint": (
-                "在 Photon 控制台 (app.photon.codes) 能看到。填写后适配器会在连接成功时把它作为机器人账号上报给 MaiBot，"
-                "不必再到「平台账号 → 备用账号」里手动添加。注意：首次填写或更改后，MaiBot 会把这个 iMessage 对话当作一个新的聊天流。"
+                "在 Photon 控制台 (app.photon.codes) 能看到。适配器会在连接成功时把它作为机器人账号上报给 MaiBot。"
+                "MaiBot 1.3.6 及以后的版本必须填写，否则收不到消息。注意：首次填写或更改后，MaiBot 会把这个 iMessage 对话当作一个新的聊天流。"
             ),
             "i18n": _schema_i18n(
                 label_en="Photon number",
                 label_ja="Photon の番号",
                 label_ko="Photon 번호",
-                hint_en="The iMessage number Photon assigned to your project, with country code. Reported to MaiBot as the bot account, so no fallback account is needed.",
-                hint_ja="Photon がプロジェクトに割り当てた iMessage 番号（国番号付き）。ボットのアカウントとして MaiBot に報告されます。",
-                hint_ko="Photon이 프로젝트에 할당한 iMessage 번호(국가 코드 포함). 봇 계정으로 MaiBot에 보고됩니다.",
+                hint_en="The iMessage number Photon assigned to your project, with country code. Reported to MaiBot as the bot account. Required on MaiBot 1.3.6 and later, otherwise no messages are received.",
+                hint_ja="Photon がプロジェクトに割り当てた iMessage 番号（国番号付き）。ボットのアカウントとして MaiBot に報告されます。MaiBot 1.3.6 以降は必須で、未入力だとメッセージを受信できません。",
+                hint_ko="Photon이 프로젝트에 할당한 iMessage 번호(국가 코드 포함). 봇 계정으로 MaiBot에 보고됩니다. MaiBot 1.3.6 이상에서는 필수이며, 입력하지 않으면 메시지를 받을 수 없습니다.",
                 placeholder_en="+14155550100",
                 placeholder_ja="+14155550100",
                 placeholder_ko="+14155550100",

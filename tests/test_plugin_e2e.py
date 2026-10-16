@@ -667,6 +667,7 @@ def test_voice_is_transcribed_or_politely_declined(tmp_path: Path, monkeypatch: 
         return {"message_id": message_id, "chat_id": "any;-;+1", "sender_id": "+1", "timestamp": 0, "parts": [part]}
 
     async def main() -> None:
+        plugin._gateway_ready.set()  # 直接调入站处理，跳过连接侧车；当作网关已就绪
         data = plugin.get_plugin_config_data()
         data["voice"]["transcribe"] = True
         plugin.set_plugin_config(data)
@@ -802,3 +803,33 @@ def test_cancelled_send_leaves_no_attachment(tmp_path: Path, monkeypatch: pytest
         await plugin.on_unload()
 
     asyncio.run(main())
+
+
+def test_inbound_messages_carry_the_reported_bot_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MaiBot 1.3.6 起，入站消息要在顶层写明机器人账号，并和网关上报的一致。"""
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=True)
+    data = plugin.get_plugin_config_data()
+    data["photon"]["bot_number"] = "+1 (415) 555-0100"
+    plugin.set_plugin_config(data)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: len(host.of("host.route_message")) == 3)
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    ready = [p for p in host.of("host.update_message_gateway_state") if p["ready"]]
+    assert all(r["message"]["account_id"] == ready[0]["account_id"] == "+14155550100" for r in host.of("host.route_message"))
+
+
+def test_inbound_messages_without_bot_number_leave_account_unset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 写成空值反而会让 MaiBot 不再用网关上报的账号兜底，所以没填号码时干脆不写
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=True)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: len(host.of("host.route_message")) == 3)
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    assert all("account_id" not in r["message"] for r in host.of("host.route_message"))

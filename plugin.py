@@ -44,6 +44,8 @@ PLATFORM = "imessage"
 SIDECAR_SCRIPT = Path(__file__).resolve().parent / "sidecar" / "dist" / "sidecar.mjs"
 # 侧车发一条消息的最长等待（MaiBot 给网关的上限是 60 秒）
 SEND_TIMEOUT = 45.0
+# 收到消息时网关还没上报就绪，最多等多久
+GATEWAY_READY_WAIT = 10.0
 # 语音识别的最长等待：收消息是逐条排队处理的，识别太慢会卡住后面的消息
 TRANSCRIBE_TIMEOUT = 30.0
 _STATE_TEXT = {
@@ -98,6 +100,8 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         # 侧车启动时的连接相关配置，以及最近一次上报给 MaiBot 的机器人号码
         self._active_settings: Optional[Dict[str, Any]] = None
         self._reported_account: Optional[str] = None
+        # 已经告诉 MaiBot「网关就绪」：之前交给 MaiBot 的消息会被拒收
+        self._gateway_ready = asyncio.Event()
         # 按对方号码记：AI 最近一次发消息的时间，以及最近一次告诉 AI「对方已读」的时间
         self._last_sent_at: Dict[str, float] = {}
         self._read_noted_at: Dict[str, float] = {}
@@ -229,16 +233,23 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
 
     async def _on_ready_change(self, ready: bool) -> None:
         self._link_down_since = None
+        self._gateway_ready.clear()
         if ready:
             # 带上机器人账号：MaiBot 会把它记为本平台的机器人身份，不需要再手动配置备用账号
             self._reported_account = self._bot_account()
+            if not self._reported_account:
+                self.ctx.logger.warning(
+                    "没有填写「Photon 号码」：MaiBot 1.3.6 及以后的版本会拒收所有 iMessage 消息，"
+                    "请在插件配置「Photon 云端 → Photon 号码」里填写"
+                )
             await self.ctx.gateway.update_state(
                 GATEWAY_NAME,
                 ready=True,
                 platform=PLATFORM,
-                account_id=self._bot_account(),
+                account_id=self._reported_account,
                 metadata={"protocol": "photon"},
             )
+            self._gateway_ready.set()
         else:
             await self.ctx.gateway.update_state(GATEWAY_NAME, ready=False)
 
@@ -421,6 +432,14 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         await self._transcribe_voice_parts(data)
         loader = functools.partial(load_image_file, max_edge=max(0, self.config.media.image_max_edge))
         message = await asyncio.to_thread(build_maibot_message, data, loader)
+        # 侧车一连上，积压的消息就会跟着到，可能比「网关就绪」的上报还早；先等上报完成，否则 MaiBot 会拒收
+        if not self._gateway_ready.is_set():
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._gateway_ready.wait(), timeout=GATEWAY_READY_WAIT)
+        # MaiBot 1.3.6 起，入站消息要写明属于哪个机器人账号（消息顶层 account_id），
+        # 且必须和网关上报的账号一致；没写时 1.3.9 每条消息都记一条「旧版格式」警告，以后的版本会直接拒收
+        if self._reported_account:
+            message["account_id"] = self._reported_account
         message_id = str(data.get("message_id", ""))
         try:
             accepted = await self.ctx.gateway.route_message(
@@ -642,7 +661,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             if last_error:
                 lines.append(f"最近错误：{self._redact(last_error)[:200]}")
         lines.append(f"Photon 项目：{self.config.photon.project_id or '未配置'}")
-        lines.append(f"机器人号码：{self._bot_account() or '未填写（需在平台账号里配置备用账号）'}")
+        lines.append(f"机器人号码：{self._bot_account() or '未填写（MaiBot 1.3.6 起必须填写，否则收不到消息）'}")
         lines.append("能力：")
         lines.extend(f"  {line}" for line in status_lines(self.config))
         await self.ctx.send.text("\n".join(lines), stream_id)
