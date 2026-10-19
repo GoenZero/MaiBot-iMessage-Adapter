@@ -14,9 +14,12 @@ export interface HistoryMessage {
   dateCreated: Date;
   isFromMe: boolean;
   isDelivered?: boolean;
+  chatGuids?: readonly string[];
   content?: { text?: string; attachments?: readonly unknown[] };
   reaction?: unknown;
   itemType?: unknown;
+  isSystemMessage?: boolean;
+  isServiceMessage?: boolean;
 }
 
 interface ListPage {
@@ -24,9 +27,12 @@ interface ListPage {
   nextPageToken?: string;
 }
 
+type ListOptions = { after?: Date; before?: Date; isFromMe?: boolean; pageSize?: number; pageToken?: string };
+
 export interface HistoryClient {
   messages: {
-    listInChat(chat: string, options: { after?: Date; before?: Date; pageSize?: number; pageToken?: string }): Promise<ListPage>;
+    listInChat(chat: string, options: ListOptions): Promise<ListPage>;
+    listRecent?(options: ListOptions): Promise<ListPage>;
   };
 }
 
@@ -100,4 +106,94 @@ export async function listHistory(
     }
   }
   throw lastError;
+}
+
+export interface RecoverDeps {
+  clients: () => HistoryClient[];
+  wasSeen: (id: string) => boolean;
+  /** 用 SDK 的正式接口把整条消息取回来（含附件），交给和实时消息一样的处理流程 */
+  deliver: (chatGuid: string, guid: string, lateMs: number) => Promise<void>;
+  warn: (message: string) => void;
+  now?: () => number;
+}
+
+/**
+ * 漏消息自动补收。真机发现：Photon 断线恢复后约 30 秒内对方发的两条消息没有推送过来，
+ * 而 SDK 只在「连接断了」时补拉，连接看着正常就不会补。这里定期对一下 Photon 上最近对方发的消息，
+ * 侧车没收到的取回来补上。只补侧车这次启动之后的消息；刚发出的消息先留给实时推送（graceMs）。
+ */
+export class MissedMessageRecoverer {
+  private readonly deps: RecoverDeps;
+  private readonly startedAt: number;
+  private readonly graceMs: number;
+  private readonly overlapMs: number;
+  private readonly now: () => number;
+  private checkedUntil: number;
+  private running = false;
+  private disabled = false;
+
+  constructor(deps: RecoverDeps, startedAt: number, graceMs = 20_000, overlapMs = 120_000) {
+    this.deps = deps;
+    this.startedAt = startedAt;
+    this.graceMs = graceMs;
+    this.overlapMs = overlapMs;
+    this.now = deps.now ?? Date.now;
+    this.checkedUntil = startedAt;
+  }
+
+  /** 查一次，返回补收了几条。出错只记日志，下次再试。 */
+  async check(): Promise<number> {
+    if (this.running || this.disabled) return 0;
+    const client = this.deps.clients().find((c) => typeof c.messages.listRecent === "function");
+    if (!client) {
+      this.disabled = true;
+      this.deps.warn("这个版本的 SDK 拿不到 Photon 的消息记录接口，漏消息自动补收已停用（不影响正常收发）");
+      return 0;
+    }
+    const after = Math.max(this.startedAt, this.checkedUntil - this.overlapMs);
+    const before = this.now() - this.graceMs;
+    if (before <= after) return 0;
+    this.running = true;
+    let recovered = 0;
+    try {
+      const missing: HistoryMessage[] = [];
+      let pageToken: string | undefined;
+      let pages = 0;
+      do {
+        const page = await client.messages.listRecent!({
+          after: new Date(after),
+          before: new Date(before),
+          isFromMe: false,
+          pageSize: PAGE_SIZE,
+          pageToken,
+        });
+        for (const message of page.messages) {
+          if (isRecoverable(message, this.startedAt) && !this.deps.wasSeen(message.guid)) missing.push(message);
+        }
+        pageToken = page.nextPageToken || undefined;
+        pages += 1;
+      } while (pageToken && pages < MAX_PAGES);
+      missing.sort((a, b) => new Date(a.dateCreated).getTime() - new Date(b.dateCreated).getTime());
+      for (const message of missing) {
+        if (this.deps.wasSeen(message.guid)) continue; // 查的这会儿实时推送刚好到了
+        const chatGuid = message.chatGuids?.[0];
+        if (!chatGuid) continue;
+        await this.deps.deliver(chatGuid, message.guid, this.now() - new Date(message.dateCreated).getTime());
+        recovered += 1;
+      }
+      this.checkedUntil = before;
+    } catch (error) {
+      this.deps.warn(`漏消息自动补收这次没查成，稍后再试：${String((error as Error)?.message ?? error)}`);
+    } finally {
+      this.running = false;
+    }
+    return recovered;
+  }
+}
+
+/** 对方发的普通消息（有文字或附件）；点按回应、系统消息不补（点按回应走另一条推送）。 */
+function isRecoverable(message: HistoryMessage, startedAt: number): boolean {
+  if (message.isFromMe || message.reaction || message.isSystemMessage || message.isServiceMessage) return false;
+  if (new Date(message.dateCreated).getTime() < startedAt) return false;
+  return Boolean(message.content?.text) || (message.content?.attachments?.length ?? 0) > 0;
 }

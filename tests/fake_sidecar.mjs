@@ -20,6 +20,10 @@ if (process.env.FAKE_EMIT === "1") {
   }
 }
 
+if (process.env.FAKE_RECOVERED === "1") {
+  frame({ t: "evt", event: "message", data: { message_id: "late1", chat_id: "any;-;+1", sender_id: "+1", timestamp: 0, recovered: true, parts: [{ type: "text", text: "Photon 漏推、补收回来的" }] } });
+}
+
 if (mode === "stall-input") {
   // 报告 ready 后不再读取输入：用来测试 Python 写管道卡住时的总时限
   process.stdin.pause();

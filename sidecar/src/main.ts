@@ -28,7 +28,7 @@ import {
   type MessageLike,
 } from "./convert.ts";
 import { LruCache } from "./handles.ts";
-import { listHistory, photonClients } from "./history.ts";
+import { listHistory, MissedMessageRecoverer, photonClients } from "./history.ts";
 import { Lanes } from "./lanes.ts";
 import { safeExtension, saveToTempFile, type StreamSource } from "./media.ts";
 import { BridgeError, classifyError, parseRequest, PROTOCOL_VERSION, type Request } from "./protocol.ts";
@@ -273,43 +273,77 @@ if (process.env.TRANSCRIBE_VOICE === "1") {
   convertOptions.saveVoice = (content: ContentLike, signal?: AbortSignal) => downloadWithTiming(content, maxAttachmentBytes, signal);
 }
 
+/**
+ * 处理一条入站消息：实时推送来的，和漏消息补收取回来的（lateMs）走同一个流程。
+ */
+async function handleInbound(space: SpaceLike, message: MessageLike, lateMs?: number): Promise<void> {
+  spaces.set(space.id, space);
+  if (!isForwardedChange(message)) {
+    for (const item of collectMessages(message)) handles.set(item.id, item as ActionMessage);
+  }
+  // 断线重连时 SDK 可能重放事件、补收也可能和实时推送撞上，按编号去重
+  if (seen.has(message.id)) return;
+  seen.set(message.id, true);
+
+  let result: InboundResult;
+  try {
+    result = await convertInbound(message, convertOptions);
+  } catch (error) {
+    // 转换本身出错也不能丢消息：退化成一条占位
+    log("ERROR", `转换入站消息失败（${message.id}）：${String((error as Error)?.stack ?? error)}`);
+    result = {
+      kind: "message",
+      data: {
+        message_id: message.id,
+        chat_id: space.id,
+        chat_type: "dm",
+        sender_id: message.sender?.id ?? "",
+        timestamp: Date.now(),
+        parts: [{ type: "unsupported", what: "无法解析的消息" }],
+      },
+    };
+  }
+  if (result.kind === "message") {
+    if (lateMs !== undefined) {
+      log("WARN", `补收了一条 Photon 没推送过来的消息（${message.id}），晚到约 ${Math.max(1, Math.round(lateMs / 60000))} 分钟`);
+      emit("message", { ...result.data, recovered: true });
+      return;
+    }
+    const delay = (Date.now() - result.data.timestamp) / 1000;
+    if (delay >= 30) log("WARN", `消息 ${message.id} 在发出 ${delay.toFixed(0)} 秒后才交给适配器（含附件下载时间）`);
+    emit("message", result.data);
+  }
+  else if (result.kind === "control") emit("control", result.data);
+}
+
+// 漏消息自动补收（RECOVER_MISSED=1）：每 2 分钟对一下 Photon 上最近对方发的消息
+if (process.env.RECOVER_MISSED === "1") {
+  const recoverer = new MissedMessageRecoverer(
+    {
+      clients: () => photonClients(app),
+      wasSeen: (id) => seen.has(id),
+      warn: (message) => logThrottled("WARN", message),
+      deliver: async (chatGuid, guid, lateMs) => {
+        const space = await resolveSpace(chatGuid);
+        const getMessage = (space as unknown as { getMessage?: (id: string) => Promise<unknown> }).getMessage;
+        const full = typeof getMessage === "function" ? await getMessage.call(space, guid) : undefined;
+        if (!full) {
+          log("WARN", `Photon 上有一条没推送过来的消息（${guid}），但取不回来`);
+          return;
+        }
+        await handleInbound(space, full as MessageLike, lateMs);
+      },
+    },
+    startedAt,
+  );
+  setInterval(() => void recoverer.check(), 120_000).unref();
+}
+
 try {
   for await (const [space, rawMessage] of app.messages) {
     // 收到消息说明与 Photon 的连接是通的（SDK 的「已恢复」日志可能晚到或不出现）
     markLinkHealthy(emitLink);
-    spaces.set(space.id, space as unknown as SpaceLike);
-    const message = rawMessage as unknown as MessageLike;
-    if (!isForwardedChange(message)) {
-      for (const item of collectMessages(message)) handles.set(item.id, item as ActionMessage);
-    }
-    // 断线重连时 SDK 可能重放事件，按编号去重
-    if (seen.has(message.id)) continue;
-    seen.set(message.id, true);
-
-    let result: InboundResult;
-    try {
-      result = await convertInbound(message, convertOptions);
-    } catch (error) {
-      // 转换本身出错也不能丢消息：退化成一条占位
-      log("ERROR", `转换入站消息失败（${message.id}）：${String((error as Error)?.stack ?? error)}`);
-      result = {
-        kind: "message",
-        data: {
-          message_id: message.id,
-          chat_id: space.id,
-          chat_type: "dm",
-          sender_id: message.sender?.id ?? "",
-          timestamp: Date.now(),
-          parts: [{ type: "unsupported", what: "无法解析的消息" }],
-        },
-      };
-    }
-    if (result.kind === "message") {
-      const delay = (Date.now() - result.data.timestamp) / 1000;
-      if (delay >= 30) log("WARN", `消息 ${message.id} 在发出 ${delay.toFixed(0)} 秒后才交给适配器（含附件下载时间）`);
-      emit("message", result.data);
-    }
-    else if (result.kind === "control") emit("control", result.data);
+    await handleInbound(space as unknown as SpaceLike, rawMessage as unknown as MessageLike);
   }
   if (!stopping) log("ERROR", "Photon 消息流意外结束");
 } catch (error) {

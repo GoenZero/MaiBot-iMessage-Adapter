@@ -226,6 +226,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             "HANDLE_CACHE_SIZE": str(self.config.bridge.handle_cache_size),
             "READ_TEXT_FILES": "1" if self.config.capabilities.read_text_files else "0",
             "TRANSCRIBE_VOICE": "1" if self.config.voice.transcribe else "0",
+            "RECOVER_MISSED": "1" if self.config.bridge.recover_missed else "0",
         }
         return node, SIDECAR_SCRIPT, env
 
@@ -444,7 +445,10 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             message["account_id"] = self._reported_account
         message_id = str(data.get("message_id", ""))
         # 每条收到的消息记一行（不含内容），对方说「消息被吞了」时能查到消息到底有没有到适配器
-        self.ctx.logger.info("收到 iMessage 消息（%s），交给 MaiBot", message_id)
+        if data.get("recovered"):
+            self.ctx.logger.warning("补收了一条 Photon 没推送过来的 iMessage 消息（%s），交给 MaiBot", message_id)
+        else:
+            self.ctx.logger.info("收到 iMessage 消息（%s），交给 MaiBot", message_id)
         try:
             accepted = await self.ctx.gateway.route_message(
                 gateway_name=GATEWAY_NAME,

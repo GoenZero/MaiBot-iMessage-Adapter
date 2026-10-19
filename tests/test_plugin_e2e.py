@@ -853,3 +853,29 @@ def test_missed_command_compares_photon_history(tmp_path: Path, monkeypatch: pyt
     assert "文字 523 字 · ❌ 适配器没收到" in report["text"] and "AI · 附件" in report["text"]
     assert report["storage_message"] is False  # 排查结果不进聊天记录和记忆
     assert "格式不对" in bad["text"]
+
+
+def test_recover_missed_is_passed_to_sidecar_and_recovered_messages_reach_maibot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    monkeypatch.setenv("FAKE_RECOVERED", "1")
+    warnings: list[str] = []
+
+    async def main() -> None:
+        await plugin.on_load()
+        original = plugin.ctx.logger.warning
+        monkeypatch.setattr(plugin.ctx.logger, "warning", lambda msg, *a: (warnings.append(msg % a), original(msg, *a)))
+        assert (await plugin._launch_args())[2]["RECOVER_MISSED"] == "1"  # 默认开
+        await plugin._supervisor.restart()
+        await wait_for(lambda: len(host.of("host.route_message")) >= 1)
+        data = plugin.get_plugin_config_data()
+        data["bridge"]["recover_missed"] = False
+        plugin.set_plugin_config(data)
+        assert (await plugin._launch_args())[2]["RECOVER_MISSED"] == "0"
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    routed = host.of("host.route_message")
+    assert routed[0]["external_message_id"] == "late1"
+    assert any("补收了一条 Photon 没推送过来的" in w for w in warnings)

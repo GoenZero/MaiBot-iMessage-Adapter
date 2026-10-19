@@ -7,7 +7,7 @@ from typing import ClassVar, Dict, Literal, Optional
 from maibot_sdk import Field, PluginConfigBase
 
 # 配置结构有增减时提升版本：MaiBot 只在版本升高时把新字段写回已有的 config.toml
-SUPPORTED_CONFIG_VERSION = "2.4.0"
+SUPPORTED_CONFIG_VERSION = "2.5.0"
 PLUGIN_VERSION = "0.2.2"
 
 DEFAULT_MAX_RETRIES = 3
@@ -260,6 +260,23 @@ class SidecarBridgeConfig(PluginConfigBase):
             "label": "Node.js 路径（可选）",
             "order": 5,
             "placeholder": "/usr/local/bin/node",
+        },
+    )
+    recover_missed: bool = Field(
+        default=True,
+        description="每 2 分钟对一下 Photon 上最近对方发的消息，Photon 没推送过来的自动补收，照常交给 AI（会晚到几分钟）。只补适配器这次启动之后的消息。",
+        json_schema_extra={
+            "hint": "真机发现 Photon 断线恢复后偶尔会漏推几条消息。关闭后漏掉的消息不会补收；发 /imessage_missed 可以手动查。",
+            "i18n": _schema_i18n(
+                label_en="Recover missed messages",
+                label_ja="取りこぼしたメッセージを回収",
+                label_ko="누락된 메시지 복구",
+                hint_en="Every 2 minutes, compare recent incoming messages on Photon and deliver the ones its live push missed.",
+                hint_ja="2 分ごとに Photon 上の最近の受信メッセージと照合し、プッシュされなかったものを届けます。",
+                hint_ko="2분마다 Photon의 최근 수신 메시지와 대조해 푸시되지 않은 메시지를 전달합니다.",
+            ),
+            "label": "漏消息自动补收",
+            "order": 6,
         },
     )
 
