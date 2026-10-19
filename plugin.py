@@ -441,6 +441,8 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         if self._reported_account:
             message["account_id"] = self._reported_account
         message_id = str(data.get("message_id", ""))
+        # 每条收到的消息记一行（不含内容），对方说「消息被吞了」时能查到消息到底有没有到适配器
+        self.ctx.logger.info("收到 iMessage 消息（%s），交给 MaiBot", message_id)
         try:
             accepted = await self.ctx.gateway.route_message(
                 gateway_name=GATEWAY_NAME,
@@ -451,7 +453,9 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             self.ctx.logger.error("注入入站消息失败：%s", exc)
             return
         if not accepted:
-            self.ctx.logger.debug("MaiBot 未接收入站消息：%s", message_id)
+            self.ctx.logger.warning(
+                "MaiBot 没有接收这条 iMessage 消息（%s）：MaiBot 日志里同一时间应有一行「忽略…入站消息」说明原因", message_id
+            )
             return
         # 贴在消息上的贴纸，编号是侧车拼出来的，Photon 不认识：引用、标已读都用被贴的那条消息
         handle_id = message_id
