@@ -257,9 +257,18 @@ def all_tool_names() -> set[str]:
     return {name for cap in REGISTRY for name in cap.tool_names}
 
 
-def build_brief(config: Any) -> str:
-    """生成给 AI 的短说明（目标 200 token 以内）。内容只随配置变化，便于模型侧缓存。"""
-    notes = [note for cap in REGISTRY if (note := cap.ai_note(config) if cap.enabled(config) else cap.off_note)]
+def build_brief(config: Any, *, set_quote_available: bool = True) -> str:
+    """生成给 AI 的短说明（目标 200 token 以内）。内容只随配置变化，便于模型侧缓存。
+
+    set_quote_available=False（MaiBot 1.3.10 起）：引用改由 MaiBot 决定，「自动」档位不再提示 AI 填 set_quote。
+    """
+    skip_reply_note = not set_quote_available and _caps(config).reply_mode == "auto"
+    notes = [
+        note
+        for cap in REGISTRY
+        if not (skip_reply_note and cap.key == "reply")
+        and (note := cap.ai_note(config) if cap.enabled(config) else cap.off_note)
+    ]
     # 几项能力可能共用一句说明，只写一次
     notes = list(dict.fromkeys(notes))
     if not notes:

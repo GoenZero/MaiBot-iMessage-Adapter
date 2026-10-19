@@ -406,15 +406,15 @@ class CapabilitiesConfig(PluginConfigBase):
     )
     reply_mode: Literal["auto", "always", "off"] = Field(
         default="auto",
-        description="AI 的回复要不要以「引用对方某句话」的形式发出。auto：AI 自己决定；always：总是引用对方最新一句；off：从不引用。",
+        description="AI 的回复要不要以「引用对方某句话」的形式发出。auto：交给 MaiBot（1.3.9 及以前由 AI 自己决定；1.3.10 起按 MaiBot 设置里的「私聊引用频率」）；always：总是引用对方最新一句；off：从不引用。",
         json_schema_extra={
             "i18n": _schema_i18n(
                 label_en="Quote replies",
                 label_ja="引用返信",
                 label_ko="인용 답장",
-                hint_en="auto: the AI decides; always: always quote the latest message; off: never quote.",
-                hint_ja="auto：AI が判断／always：常に最新の発言を引用／off：引用しない。",
-                hint_ko="auto: AI가 결정 / always: 항상 최신 메시지 인용 / off: 인용 안 함.",
+                hint_en="auto: left to MaiBot (the AI up to 1.3.9; the private quote frequency setting from 1.3.10); always: always quote the latest message; off: never quote.",
+                hint_ja="auto：MaiBot に任せる（1.3.9 までは AI が判断、1.3.10 からは個人チャットの引用返信頻度の設定）／always：常に最新の発言を引用／off：引用しない。",
+                hint_ko="auto: MaiBot에 맡김 (1.3.9까지는 AI가 결정, 1.3.10부터는 개인 채팅 인용 빈도 설정) / always: 항상 최신 메시지 인용 / off: 인용 안 함.",
             ),
             "label": "引用回复",
             "order": 3,

@@ -6,7 +6,7 @@ import copy
 
 import imessage_adapter_under_test as plugin_module
 from imessage_adapter_under_test.core.capabilities import build_brief, disabled_tool_names, status_lines
-from imessage_adapter_under_test.core.planner import BRIEF_ITEM_ID, adjust_planner_request
+from imessage_adapter_under_test.core.planner import BRIEF_ITEM_ID, adjust_planner_request, reply_tool_has_set_quote
 
 
 def config_with(**caps):
@@ -134,3 +134,19 @@ def test_tool_argument_coercion():
     assert as_string_list('["a", "b"]') == ["a", "b"]
     assert as_string_list("火锅、烧烤，日料") == ["火锅", "烧烤", "日料"]
     assert as_string_list(None) == []
+
+
+def test_maibot_1_3_10_reply_tool_without_set_quote():
+    """MaiBot 1.3.10 起 reply 工具没有 set_quote，引用由 MaiBot 的「私聊引用频率」决定：不能再提示 AI 去填。"""
+    old_reply = {"type": "function", "function": {"name": "reply", "parameters": {"properties": {"msg_id": {}, "set_quote": {}}}}}
+    new_reply = {"type": "function", "function": {"name": "reply", "parameters": {"properties": {"msg_id": {}}}}}
+    assert reply_tool_has_set_quote([old_reply]) is True
+    assert reply_tool_has_set_quote([new_reply]) is False
+    assert reply_tool_has_set_quote(None) is True  # 拿不到工具列表时按旧版处理
+    assert "set_quote" not in build_brief(config_with(), set_quote_available=False)
+    # always / off 由适配器在发送时决定，和 MaiBot 版本无关，说明照旧
+    assert "不需要设置 set_quote" in build_brief(config_with(reply_mode="always"), set_quote_available=False)
+    assert "引用回复已关闭" in build_brief(config_with(reply_mode="off"), set_quote_available=False)
+    # 改写 reply 工具时没有 set_quote 也不出错、不改动
+    kwargs = {"tool_definitions": [new_reply], "items": [], "session_id": "s"}
+    assert adjust_planner_request(kwargs, is_imessage=True, hidden_tools=(), reply_mode="auto", brief="") is None

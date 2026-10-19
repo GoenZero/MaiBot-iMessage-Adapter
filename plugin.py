@@ -33,7 +33,7 @@ from .core.inbound import build_maibot_message
 from .core.media import load_image_file
 from .core.node_runtime import resolve_node
 from .core.outbound import apply_link_previews, build_outbound_plan, looks_like_markdown, resolve_target
-from .core.planner import adjust_planner_request
+from .core.planner import adjust_planner_request, reply_tool_has_set_quote
 from .core.sessions import SessionDirectory
 from .core.typing import TypingController
 from .tools import ACTION_TIMEOUT, IMessageToolsMixin
@@ -297,7 +297,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         is_imessage = active and await self._imessage_user_for(session_id) is not None
         if is_imessage:
             hidden = disabled_tool_names(self.config)
-            brief = build_brief(self.config)
+            brief = build_brief(self.config, set_quote_available=reply_tool_has_set_quote(kwargs.get("tool_definitions")))
         else:
             hidden, brief = all_tool_names(), ""
         modified = adjust_planner_request(
@@ -618,7 +618,7 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
     def _choose_reply_target(self, chat_id: str, requested: Optional[str]) -> Optional[str]:
         """按引用档位决定这条回复引用哪条消息。
 
-        - auto：照 MaiBot 给的（AI 在 reply 工具里明确选了 set_quote 才会有）
+        - auto：照 MaiBot 给的（MaiBot 1.3.9 及以前是 AI 在 reply 工具里选 set_quote；1.3.10 起由 MaiBot 的「私聊引用频率」决定）
         - always：MaiBot 没给时，引用对方最新一条；同一条只引用一次，避免分段回复每段都引用
         - off：一律不引用
         """

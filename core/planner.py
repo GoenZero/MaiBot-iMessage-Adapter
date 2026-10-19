@@ -31,6 +31,23 @@ def tool_name(definition: Dict[str, Any]) -> str:
     return str(definition.get("name", ""))
 
 
+def reply_tool_has_set_quote(tool_definitions: Any) -> bool:
+    """MaiBot 的 reply 工具还让 AI 选「要不要引用」吗。
+
+    MaiBot 1.3.10 起去掉了 set_quote 参数，改由它自己的「私聊引用频率」设置决定引用；
+    这时就不该再提示 AI 去填这个参数。拿不到工具列表时按旧版处理。
+    """
+    if not isinstance(tool_definitions, list):
+        return True
+    for definition in tool_definitions:
+        if isinstance(definition, dict) and tool_name(definition) == "reply":
+            function = definition.get("function") if isinstance(definition.get("function"), dict) else definition
+            parameters = function.get("parameters") if isinstance(function.get("parameters"), dict) else {}
+            properties = parameters.get("properties") if isinstance(parameters.get("properties"), dict) else {}
+            return "set_quote" in properties
+    return True
+
+
 def _rewrite_reply_tool(definition: Dict[str, Any], reply_mode: str) -> Dict[str, Any]:
     """按引用档位改写内置 reply 工具的 set_quote 参数。"""
     rewritten = copy.deepcopy(definition)
