@@ -834,3 +834,22 @@ def test_inbound_messages_without_bot_number_leave_account_unset(tmp_path: Path,
 
     asyncio.run(main())
     assert all("account_id" not in r["message"] for r in host.of("host.route_message"))
+
+
+def test_missed_command_compares_photon_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=True)
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: plugin._supervisor is not None and plugin._supervisor.is_ready)
+        await wait_for(lambda: bool(plugin._chat_by_user))
+        await plugin.handle_missed(stream_id="s1", matched_groups={"args": "30"})
+        await plugin.handle_missed(stream_id="s1", matched_groups={"args": "明天"})
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    sent = [p["args"] for p in host.of("cap.call") if p["capability"] == "send.text"]
+    report, bad = sent[-2], sent[-1]
+    assert "文字 523 字 · ❌ 适配器没收到" in report["text"] and "AI · 附件" in report["text"]
+    assert report["storage_message"] is False  # 排查结果不进聊天记录和记忆
+    assert "格式不对" in bad["text"]

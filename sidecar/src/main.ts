@@ -28,6 +28,7 @@ import {
   type MessageLike,
 } from "./convert.ts";
 import { LruCache } from "./handles.ts";
+import { listHistory, photonClients } from "./history.ts";
 import { Lanes } from "./lanes.ts";
 import { safeExtension, saveToTempFile, type StreamSource } from "./media.ts";
 import { BridgeError, classifyError, parseRequest, PROTOCOL_VERSION, type Request } from "./protocol.ts";
@@ -99,6 +100,20 @@ const provider = imessage(app);
 const spaces = new Map<string, SpaceLike>();
 const handles = new LruCache<ActionMessage>(handleCacheSize);
 const seen = new LruCache<true>(2000);
+const startedAt = Date.now();
+
+/** 排查用：Photon 上这个聊天在一段时间里的消息，标出侧车收到过没有（不含内容）。 */
+async function listMessages(args: Record<string, unknown>): Promise<object> {
+  const chatId = typeof args.chat_id === "string" ? args.chat_id : "";
+  const after = Number(args.after);
+  const before = Number(args.before);
+  if (!chatId || !Number.isFinite(after) || !Number.isFinite(before) || after >= before) {
+    throw new BridgeError("BAD_REQUEST", "需要 chat_id 和有效的时间范围");
+  }
+  const chatGuid = chatId.includes(";") ? chatId : `any;-;${chatId}`;
+  const result = await listHistory(photonClients(app), chatGuid, new Date(after), new Date(before), (id) => seen.has(id));
+  return { ...result, sidecar_started_at: startedAt };
+}
 
 /** 裸号码或邮箱补成私聊对话编号；已知对话直接复用。 */
 async function resolveSpace(chatId: string): Promise<SpaceLike> {
@@ -172,6 +187,8 @@ async function dispatch(request: Request): Promise<object> {
       return actions.typing(request.args);
     case "mark_read":
       return actions.markRead(request.args);
+    case "list_messages":
+      return listMessages(request.args);
     case "shutdown":
       setImmediate(() => void shutdown(0));
       return {};

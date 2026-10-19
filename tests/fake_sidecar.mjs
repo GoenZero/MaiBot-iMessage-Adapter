@@ -56,6 +56,19 @@ rl.on("line", (line) => {
         frame({ t: "res", id: req.id, ok: true, result: {} });
       }
       break;
+    case "list_messages": {
+      const at = (offset) => req.args.after + offset;
+      frame({ t: "res", id: req.id, ok: true, result: {
+        sidecar_started_at: req.args.after - 1,
+        truncated: false,
+        messages: [
+          { id: "m1", time: at(60000), from_me: false, kind: "text", chars: 12, attachments: 0, received: true },
+          { id: "m2", time: at(120000), from_me: false, kind: "text", chars: 523, attachments: 0, received: false },
+          { id: "m3", time: at(180000), from_me: true, kind: "attachment", chars: 0, attachments: 1, received: false },
+        ],
+      } });
+      break;
+    }
     case "background":
       if (req.args.message_id === "txt") {
         frame({ t: "res", id: req.id, ok: false, error: { code: "NO_IMAGE", message: "没有图片" } });

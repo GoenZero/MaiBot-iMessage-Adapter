@@ -146,6 +146,7 @@ MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码。
 |------|------|
 | `/imessage_status` | 查看连接状态、版本、重启次数、最近错误 |
 | `/imessage_reconnect` | 手动重连（认证失败停下后，改好配置也可以用它重试） |
+| `/imessage_missed` | 「消息被吞」时排查：对照 Photon 上的消息记录，看你发的消息适配器有没有收到。可以写时间，例如 `/imessage_missed 13:40 14:00`；不写就查最近 60 分钟。只显示时间和字数，不显示内容 |
 
 ### AI 能做的事
 
@@ -203,6 +204,7 @@ MaiBot 需要知道「机器人自己」在 iMessage 上是哪个号码。
 | 报 `Target not allowed for this project` | 对方还没给 Photon 号码发过消息 | 先用 iMessage 给 Photon 号码发一条消息；仍不行就到 Photon 控制台 Users 里添加号码 |
 | 能收不能发 | MaiBot 不知道机器人号码 | 在插件配置里填写「Photon 号码」（见上文「使用」） |
 | 显示「与 Photon 的连接中断，正在自动重连」 | 网络或 Photon 服务波动 | 一般会自己恢复；`/imessage_status` 会显示中断了多久 |
+| 发的消息 AI 说没收到 | 消息没到 Photon，或 Photon 的实时推送漏了，或 MaiBot 没接收 | 发 `/imessage_missed 开始时间 结束时间`：Photon 上没有这条，问题在 Photon 之前；有但标着「适配器没收到」，是 Photon 推送漏了；适配器收到了，就看 MaiBot 日志里同一时间有没有「MaiBot 没有接收」 |
 | AI 从来不用某个能力 | 这项能力被关掉了；或者 AI 判断当时不适合用 | `/imessage_status` 能看到各项开关；特效、贴纸等工具本来就要求 AI 少用 |
 | 语音只显示「[语音消息（约 N 秒）]」 | 没开「语音转文字」，或 MaiBot 没配置语音识别模型 | WebUI「语音」页打开，并在 MaiBot「模型配置」里配好语音识别 |
 

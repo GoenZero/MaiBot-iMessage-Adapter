@@ -22,11 +22,13 @@ import functools
 import os
 import shutil
 import time
+from datetime import datetime
 
 from .config import PLUGIN_VERSION, IMessageAdapterConfig
 from .core.bridge import SidecarError, SidecarSupervisor
 from .core.capabilities import all_tool_names, build_brief, capability, disabled_tool_names, status_lines
 from .core.events import describe_control_event
+from .core.history import format_history, parse_range
 from .core.inbound import build_maibot_message
 from .core.media import load_image_file
 from .core.node_runtime import resolve_node
@@ -687,6 +689,40 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
         with contextlib.suppress(Exception):
             await self._reply_to_command("🔄 iMessage 适配器已触发重连", stream_id)
         return True, "已重连", True
+
+    @Command(
+        "imessage_missed",
+        description="对照 Photon 上的消息记录，查你发的消息适配器有没有收到",
+        pattern=r"^/imessage_missed(?:\s+(?P<args>.+))?$",
+    )
+    async def handle_missed(self, stream_id: str = "", matched_groups: Optional[Dict[str, Any]] = None, **kwargs: Any) -> tuple:
+        """排查「消息被吞」：只读，不改任何东西。"""
+        del kwargs
+        args = str((matched_groups or {}).get("args") or "")
+        span, problem = parse_range(args, datetime.now())
+        supervisor = self._supervisor
+        chat_id = await self._chat_for_stream(stream_id) if stream_id else None
+        if chat_id is None and len(set(self._chat_by_user.values())) == 1:
+            chat_id = next(iter(self._chat_by_user.values()))
+        if span is None:
+            text = f"❌ {problem}"
+        elif supervisor is None or not supervisor.is_ready:
+            text = "❌ 适配器还没连上 Photon，查不了"
+        elif not chat_id:
+            text = "❌ 不知道要查哪个聊天：请在 iMessage 聊天里发这个命令"
+        else:
+            start, end = span
+            try:
+                result = await supervisor.request(
+                    "list_messages",
+                    {"chat_id": chat_id, "after": int(start.timestamp() * 1000), "before": int(end.timestamp() * 1000)},
+                    timeout=ACTION_TIMEOUT,
+                )
+                text = format_history(result if isinstance(result, dict) else {}, start, end)
+            except SidecarError as exc:
+                text = f"❌ 向 Photon 查消息记录失败：{self._redact(str(exc))[:200]}"
+        await self._reply_to_command(text, stream_id)
+        return True, "已查询", True
 
     async def _reply_to_command(self, text: str, stream_id: str) -> None:
         """回复管理命令。不存进聊天记录：否则 MaiBot 重启后恢复上下文、生成聊天回想和长期记忆时，
