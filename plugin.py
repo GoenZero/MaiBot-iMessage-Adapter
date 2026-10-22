@@ -227,8 +227,24 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             "READ_TEXT_FILES": "1" if self.config.capabilities.read_text_files else "0",
             "TRANSCRIBE_VOICE": "1" if self.config.voice.transcribe else "0",
             "RECOVER_MISSED": "1" if self.config.bridge.recover_missed else "0",
+            "RECOVER_CHATS": await self._recover_chat_seed(),
         }
         return node, SIDECAR_SCRIPT, env
+
+    async def _recover_chat_seed(self) -> str:
+        """漏消息补收要核对的聊天：MaiBot 里已有的 iMessage 私聊对象，逗号分隔。
+
+        侧车只按聊天逐个向 Photon 查；提前告诉它，重启后第一条消息就漏推的情况也能补上。
+        查不到就留空，侧车收发过消息后会自己记下聊天。
+        """
+        if not self.config.bridge.recover_missed:
+            return ""
+        try:
+            await asyncio.wait_for(self._sessions.refresh(), timeout=10)
+        except Exception as exc:
+            self.ctx.logger.warning("查询 iMessage 聊天流失败，漏消息补收先只核对这次收发过消息的聊天：%s", exc)
+            return ""
+        return ",".join(self._sessions.users())
 
     def _bot_account(self) -> str:
         """WebUI 填写的 Photon 号码，规范成 +国家代码数字（邮箱则转小写）。"""

@@ -101,7 +101,7 @@ MaiBot ⇄ plugin.py ──(标准输入输出，一行一个 JSON)── Node.j
 | `[bridge]` | `max_attachment_size_mb` | 50 | 单个附件上限（MB），收发都适用 |
 | `[bridge]` | `handle_cache_size` | 500 | 记住最近多少条消息，供引用、点赞使用 |
 | `[bridge]` | `node_path` | "" | Node.js 路径，留空自动查找 |
-| `[bridge]` | `recover_missed` | true | 漏消息自动补收：每 2 分钟对一下 Photon 上最近对方发的消息，没推送过来的自动补上 |
+| `[bridge]` | `recover_missed` | true | 漏消息自动补收：按需对一下 Photon 上对方最近发的消息，没推送过来的自动补上（刚连上或断线恢复后半小时内每 2 分钟一次，聊天中每 10 分钟，没人聊天时每 30 分钟） |
 | `[capabilities]` | `typing_indicator` | true | AI 开始写回复时显示「正在输入」 |
 | `[capabilities]` | `read_receipts` | true | 开始处理对方消息时自动发「已读」 |
 | `[capabilities]` | `reactions` | true | 允许 AI 点爱心、点赞等（Tapback） |

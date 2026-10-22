@@ -264,16 +264,16 @@ class SidecarBridgeConfig(PluginConfigBase):
     )
     recover_missed: bool = Field(
         default=True,
-        description="每 2 分钟对一下 Photon 上最近对方发的消息，Photon 没推送过来的自动补收，照常交给 AI（会晚到几分钟）。只补适配器这次启动之后的消息。",
+        description="按需对一下 Photon 上对方最近发的消息，Photon 没推送过来的自动补收，照常交给 AI（会晚到几分钟）。只补适配器这次启动之后的消息。刚连上或断线恢复后的半小时内每 2 分钟查一次，聊天中每 10 分钟一次，没人聊天时每 30 分钟一次。",
         json_schema_extra={
             "hint": "真机发现 Photon 断线恢复后偶尔会漏推几条消息。关闭后漏掉的消息不会补收；发 /imessage_missed 可以手动查。",
             "i18n": _schema_i18n(
                 label_en="Recover missed messages",
                 label_ja="取りこぼしたメッセージを回収",
                 label_ko="누락된 메시지 복구",
-                hint_en="Every 2 minutes, compare recent incoming messages on Photon and deliver the ones its live push missed.",
-                hint_ja="2 分ごとに Photon 上の最近の受信メッセージと照合し、プッシュされなかったものを届けます。",
-                hint_ko="2분마다 Photon의 최근 수신 메시지와 대조해 푸시되지 않은 메시지를 전달합니다.",
+                hint_en="Compares recent incoming messages on Photon with what arrived and delivers the ones its live push missed: every 2 minutes for half an hour after (re)connecting, every 10 minutes while chatting, every 30 minutes when idle.",
+                hint_ja="Photon 上の最近の受信メッセージと照合し、プッシュされなかったものを届けます。接続・再接続後 30 分間は 2 分ごと、会話中は 10 分ごと、会話がないときは 30 分ごとに確認します。",
+                hint_ko="Photon의 최근 수신 메시지와 대조해 푸시되지 않은 메시지를 전달합니다. 연결·재연결 후 30분 동안은 2분마다, 대화 중에는 10분마다, 대화가 없을 때는 30분마다 확인합니다.",
             ),
             "label": "漏消息自动补收",
             "order": 6,

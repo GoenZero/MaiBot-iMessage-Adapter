@@ -45,12 +45,20 @@ function isMessageStream(label: string): boolean {
 
 export type StreamLogKind = "interrupted" | "repeat" | "recovered" | "other";
 
+const recoveredListeners: (() => void)[] = [];
+
+/** 连接从中断恢复时通知（漏消息补收据此在恢复后查得勤一些）。 */
+export function onLinkRecovered(listener: () => void): void {
+  recoveredListeners.push(listener);
+}
+
 /** 确认连接正常（消息流恢复，或者收到了新消息）：清空中断记录，之前是中断状态就发 ok。 */
 export function markLinkHealthy(emit: (data: object) => void): void {
   interruptedStreams.clear();
   if (linkDown) {
     linkDown = false;
     emit({ state: "ok" });
+    for (const listener of recoveredListeners) listener();
   }
 }
 

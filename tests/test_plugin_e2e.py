@@ -866,13 +866,17 @@ def test_recover_missed_is_passed_to_sidecar_and_recovered_messages_reach_maibot
         await plugin.on_load()
         original = plugin.ctx.logger.warning
         monkeypatch.setattr(plugin.ctx.logger, "warning", lambda msg, *a: (warnings.append(msg % a), original(msg, *a)))
-        assert (await plugin._launch_args())[2]["RECOVER_MISSED"] == "1"  # 默认开
+        env = (await plugin._launch_args())[2]
+        assert env["RECOVER_MISSED"] == "1"  # 默认开
+        assert env["RECOVER_CHATS"] == "+1"  # MaiBot 里已有的 iMessage 私聊，侧车按聊天逐个核对
         await plugin._supervisor.restart()
         await wait_for(lambda: len(host.of("host.route_message")) >= 1)
         data = plugin.get_plugin_config_data()
         data["bridge"]["recover_missed"] = False
         plugin.set_plugin_config(data)
-        assert (await plugin._launch_args())[2]["RECOVER_MISSED"] == "0"
+        env = (await plugin._launch_args())[2]
+        assert env["RECOVER_MISSED"] == "0"
+        assert env["RECOVER_CHATS"] == ""
         await plugin.on_unload()
 
     asyncio.run(main())

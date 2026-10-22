@@ -11,7 +11,7 @@
  */
 // stdio 必须最先导入：它负责把所有杂项输出从协议通道里挪走
 import { emitLink, log, logThrottled, registerSecret, writeFrame } from "./stdio.ts";
-import { markLinkHealthy } from "./sdklog.ts";
+import { markLinkHealthy, onLinkRecovered } from "./sdklog.ts";
 
 import { Spectrum } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
@@ -28,7 +28,7 @@ import {
   type MessageLike,
 } from "./convert.ts";
 import { LruCache } from "./handles.ts";
-import { listHistory, MissedMessageRecoverer, photonClients } from "./history.ts";
+import { DEFAULT_RECOVER_SCHEDULE, listHistory, MissedMessageRecoverer, photonClients } from "./history.ts";
 import { Lanes } from "./lanes.ts";
 import { safeExtension, saveToTempFile, type StreamSource } from "./media.ts";
 import { BridgeError, classifyError, parseRequest, PROTOCOL_VERSION, type Request } from "./protocol.ts";
@@ -101,6 +101,8 @@ const spaces = new Map<string, SpaceLike>();
 const handles = new LruCache<ActionMessage>(handleCacheSize);
 const seen = new LruCache<true>(2000);
 const startedAt = Date.now();
+/** 漏消息自动补收；关闭时为 undefined（在文件末尾创建） */
+let recoverer: MissedMessageRecoverer | undefined;
 
 /** 排查用：Photon 上这个聊天在一段时间里的消息，标出侧车收到过没有（不含内容）。 */
 async function listMessages(args: Record<string, unknown>): Promise<object> {
@@ -284,6 +286,7 @@ async function handleInbound(space: SpaceLike, message: MessageLike, lateMs?: nu
   // 断线重连时 SDK 可能重放事件、补收也可能和实时推送撞上，按编号去重
   if (seen.has(message.id)) return;
   seen.set(message.id, true);
+  recoverer?.noteActivity();
 
   let result: InboundResult;
   try {
@@ -316,13 +319,21 @@ async function handleInbound(space: SpaceLike, message: MessageLike, lateMs?: nu
   else if (result.kind === "control") emit("control", result.data);
 }
 
-// 漏消息自动补收（RECOVER_MISSED=1）：每 2 分钟对一下 Photon 上最近对方发的消息
+// 漏消息自动补收（RECOVER_MISSED=1）：按需对一下 Photon 上对方最近发的消息（频率见 DEFAULT_RECOVER_SCHEDULE）。
+// 要核对的聊天：插件启动时告知的已有聊天（RECOVER_CHATS，逗号分隔），加上这次启动后收发过消息的聊天。
 if (process.env.RECOVER_MISSED === "1") {
-  const recoverer = new MissedMessageRecoverer(
+  const seedChats = (process.env.RECOVER_CHATS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .map((id) => (id.includes(";") ? id : `any;-;${id}`));
+  recoverer = new MissedMessageRecoverer(
     {
       clients: () => photonClients(app),
+      chats: () => [...seedChats, ...spaces.keys()],
       wasSeen: (id) => seen.has(id),
       warn: (message) => logThrottled("WARN", message),
+      info: (message) => log("INFO", message),
       deliver: async (chatGuid, guid, lateMs) => {
         const space = await resolveSpace(chatGuid);
         const getMessage = (space as unknown as { getMessage?: (id: string) => Promise<unknown> }).getMessage;
@@ -336,7 +347,9 @@ if (process.env.RECOVER_MISSED === "1") {
     },
     startedAt,
   );
-  setInterval(() => void recoverer.check(), 120_000).unref();
+  const active = recoverer;
+  onLinkRecovered(() => active.noteReconnect());
+  setInterval(() => void active.tick(), DEFAULT_RECOVER_SCHEDULE.reconnectIntervalMs).unref();
 }
 
 try {

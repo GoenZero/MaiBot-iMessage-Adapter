@@ -46,6 +46,10 @@ class SessionDirectory:
             await self.refresh()
         return self._user_by_session.get(session_id)
 
+    def users(self) -> List[str]:
+        """已知的 iMessage 私聊对象（去重、排序）。"""
+        return sorted(set(self._user_by_session.values()))
+
     def remember(self, session_id: str, user_id: str) -> None:
         if session_id and user_id:
             self._user_by_session[session_id] = user_id
