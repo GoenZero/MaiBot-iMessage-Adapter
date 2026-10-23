@@ -246,6 +246,27 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             return ""
         return ",".join(self._sessions.users())
 
+    # 冷启动时插件比 MaiBot 的聊天管理器先启动，启动侧车那一刻查不到聊天流（RECOVER_CHATS 为空）。
+    # 侧车就绪后再分几次查，查到就告诉侧车。
+    _RECOVER_SEED_DELAYS: ClassVar[tuple[float, ...]] = (0, 5, 15, 45, 120)
+
+    async def _push_recover_chats(self) -> None:
+        for delay in self._RECOVER_SEED_DELAYS:
+            await asyncio.sleep(delay)
+            supervisor = self._supervisor
+            if supervisor is None or not supervisor.is_ready:
+                return
+            try:
+                await asyncio.wait_for(self._sessions.refresh(), timeout=10)
+                users = self._sessions.users()
+                if not users:
+                    continue
+                result = await supervisor.request("set_recover_chats", {"chat_ids": users}, timeout=10)
+                self.ctx.logger.debug("漏消息补收要核对的聊天已告诉侧车：%s", result)
+                return
+            except Exception as exc:
+                self.ctx.logger.debug("把要核对的聊天告诉侧车失败，稍后再试：%s", exc)
+
     def _bot_account(self) -> str:
         """WebUI 填写的 Photon 号码，规范成 +国家代码数字（邮箱则转小写）。"""
         return normalize_account(self.config.photon.bot_number)
@@ -269,6 +290,8 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
                 metadata={"protocol": "photon"},
             )
             self._gateway_ready.set()
+            if self.config.bridge.recover_missed:
+                self._spawn(self._push_recover_chats())
         else:
             await self.ctx.gateway.update_state(GATEWAY_NAME, ready=False)
 

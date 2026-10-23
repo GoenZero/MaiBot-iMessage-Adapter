@@ -855,6 +855,30 @@ def test_missed_command_compares_photon_history(tmp_path: Path, monkeypatch: pyt
     assert "格式不对" in bad["text"]
 
 
+def test_known_chats_reach_sidecar_after_maibot_finishes_starting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """冷启动时插件比聊天管理器先起来：一开始查不到聊天流，侧车就绪后再查到时补告诉侧车。"""
+    plugin, host = make_plugin(tmp_path, monkeypatch, emit=False)
+    monkeypatch.setattr(type(plugin), "_RECOVER_SEED_DELAYS", (0, 0.2, 0.2))
+    calls = 0
+    real_fetch = plugin._fetch_imessage_streams
+
+    async def fetch_late() -> Any:
+        nonlocal calls
+        calls += 1
+        return [] if calls <= 2 else await real_fetch()  # 第 1 次是启动侧车时，第 2 次是就绪后立刻查
+
+    plugin._sessions._fetch = fetch_late
+
+    async def main() -> None:
+        await plugin.on_load()
+        await wait_for(lambda: any(op["op"] == "set_recover_chats" for op in sidecar_ops(tmp_path)))
+        await plugin.on_unload()
+
+    asyncio.run(main())
+    pushed = [op for op in sidecar_ops(tmp_path) if op["op"] == "set_recover_chats"]
+    assert [op["args"] for op in pushed] == [{"chat_ids": ["+1"]}]  # 查到一次就停
+
+
 def test_recover_missed_is_passed_to_sidecar_and_recovered_messages_reach_maibot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

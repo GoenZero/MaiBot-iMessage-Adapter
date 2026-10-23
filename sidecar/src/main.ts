@@ -103,6 +103,19 @@ const seen = new LruCache<true>(2000);
 const startedAt = Date.now();
 /** 漏消息自动补收；关闭时为 undefined（在文件末尾创建） */
 let recoverer: MissedMessageRecoverer | undefined;
+/**
+ * 补收要核对的已有聊天：启动时的 RECOVER_CHATS（逗号分隔），加上插件之后用 set_recover_chats 告知的
+ * （冷启动时插件比 MaiBot 的聊天管理器先启动，启动那一刻查不到）。这次启动后收发过消息的聊天另从 spaces 取。
+ */
+const recoverChats = new Set<string>();
+function addRecoverChats(ids: readonly unknown[]): number {
+  for (const raw of ids) {
+    const id = typeof raw === "string" ? raw.trim() : "";
+    if (id) recoverChats.add(id.includes(";") ? id : `any;-;${id}`);
+  }
+  return recoverChats.size;
+}
+addRecoverChats((process.env.RECOVER_CHATS ?? "").split(","));
 
 /** 排查用：Photon 上这个聊天在一段时间里的消息，标出侧车收到过没有（不含内容）。 */
 async function listMessages(args: Record<string, unknown>): Promise<object> {
@@ -191,6 +204,11 @@ async function dispatch(request: Request): Promise<object> {
       return actions.markRead(request.args);
     case "list_messages":
       return listMessages(request.args);
+    case "set_recover_chats": {
+      const ids = request.args.chat_ids;
+      if (!Array.isArray(ids)) throw new BridgeError("BAD_REQUEST", "需要 chat_ids 数组");
+      return { chats: addRecoverChats(ids) };
+    }
     case "shutdown":
       setImmediate(() => void shutdown(0));
       return {};
@@ -320,17 +338,12 @@ async function handleInbound(space: SpaceLike, message: MessageLike, lateMs?: nu
 }
 
 // 漏消息自动补收（RECOVER_MISSED=1）：按需对一下 Photon 上对方最近发的消息（频率见 DEFAULT_RECOVER_SCHEDULE）。
-// 要核对的聊天：插件启动时告知的已有聊天（RECOVER_CHATS，逗号分隔），加上这次启动后收发过消息的聊天。
+// 要核对的聊天：插件告知的已有聊天（recoverChats），加上这次启动后收发过消息的聊天。
 if (process.env.RECOVER_MISSED === "1") {
-  const seedChats = (process.env.RECOVER_CHATS ?? "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean)
-    .map((id) => (id.includes(";") ? id : `any;-;${id}`));
   recoverer = new MissedMessageRecoverer(
     {
       clients: () => photonClients(app),
-      chats: () => [...seedChats, ...spaces.keys()],
+      chats: () => [...recoverChats, ...spaces.keys()],
       wasSeen: (id) => seen.has(id),
       warn: (message) => logThrottled("WARN", message),
       info: (message) => log("INFO", message),
