@@ -531,7 +531,8 @@ class IMessageAdapterPlugin(IMessageToolsMixin, MaiBotPlugin):
             return None
         chat_id = await self._chat_for_stream(str(kwargs.get("session_id") or ""))
         if chat_id:
-            await typing.start(chat_id)
+            # Photon 偶尔要好几秒才回，不能卡住 5 秒的 Hook
+            self._spawn(typing.start(chat_id))
         return None
 
     @HookHandler(
