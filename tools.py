@@ -176,6 +176,8 @@ class IMessageToolsMixin:
             ),
         ],
         chat_scope="private",
+        # 插件工具默认要先 tool_search 才看得到，AI 几乎想不起来用；点回应是日常动作，直接放进工具列表
+        visibility="visible",
     )
     async def tool_react(
         self, msg_id: str = "", kind: str = "", remove: bool = False, stream_id: str = "", **kwargs: Any
